@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $redirect_page = match($role) {
                     'Admin' => 'admin.php',
                     'Farmer' => 'farmer.php',
-                    'Agriculture Official' => 'agri.php',
+                    'Agriculture Official' => 'agriDA.php',
                     default => 'index.php'
                 };
                 header("Location: $redirect_page");

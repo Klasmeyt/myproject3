@@ -1,6 +1,18 @@
 <?php 
 session_start(); 
-require_once 'api/config.php';
+
+// Connect to database (same as login.php)
+try {
+    $pdo = new PDO("mysql:host=localhost;dbname=myproject4;charset=utf8mb4", "root", "", [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+    ]);
+} catch(PDOException $e) {
+    $db_error = "Database connection failed: " . $e->getMessage();
+}
+
+$register_success = '';
+$register_error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $fname = trim($_POST['fname']);
@@ -8,27 +20,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email']);
     $mobile = trim($_POST['mobile']);
     $role = $_POST['role'];
-    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+    $password = $_POST['password'];
+    $cpassword = $_POST['cpassword'];
     
-    try {
-        $stmt = $pdo->prepare("INSERT INTO users (firstName, lastName, email, password, mobile, role, status) VALUES (?, ?, ?, ?, ?, ?, 'Pending')");
-        $stmt->execute([$fname, $lname, $email, $password, $mobile, $role]);
-        $register_success = "Registration successful! Your account is pending approval.";
-    } catch (PDOException $e) {
-        $register_error = "Email already exists or registration failed.";
+    // Server-side validation
+    $errors = [];
+    
+    if (empty($fname) || empty($lname) || empty($email) || empty($mobile) || empty($role) || empty($password)) {
+        $errors[] = "All fields are required.";
+    }
+    
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $errors[] = "Invalid email format.";
+    }
+    
+    if ($password !== $cpassword) {
+        $errors[] = "Passwords do not match.";
+    }
+    
+    if (strlen($password) < 8) {
+        $errors[] = "Password must be at least 8 characters.";
+    }
+    
+    if (!isset($_POST['terms'])) {
+        $errors[] = "You must agree to the Terms and Conditions.";
+    }
+    
+    // Check if email already exists
+    if (empty($errors)) {
+        try {
+            $checkStmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
+            $checkStmt->execute([$email]);
+            if ($checkStmt->fetch()) {
+                $errors[] = "Email already exists. Please use a different email.";
+            }
+        } catch(PDOException $e) {
+            $errors[] = "Database check failed.";
+        }
+    }
+    
+    // If no errors, proceed with registration
+    if (empty($errors)) {
+        try {
+            $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $pdo->prepare("INSERT INTO users (firstName, lastName, email, password, mobile, role, status) VALUES (?, ?, ?, ?, ?, ?, 'Pending')");
+            $stmt->execute([$fname, $lname, $email, $hashedPassword, $mobile, $role]);
+            
+            $register_success = "Registration successful! Your account is pending approval by an administrator.";
+        } catch(PDOException $e) {
+            $register_error = "Registration failed. Please try again.";
+            error_log("Registration error: " . $e->getMessage());
+        }
+    } else {
+        $register_error = implode(' ', $errors);
     }
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-        <meta charset="UTF-8">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Register | AgriTrace+</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Syne:wght@800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
+        /* Your existing CSS remains exactly the same */
         :root {
             --primary-green: #10b981; 
             --accent-blue: #3b82f6;
@@ -142,34 +201,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         <p class="subtitle">Create Your Account</p>
 
-        <?php if (isset($register_success)): ?>
+        <?php if ($register_success): ?>
             <div class="success-msg">
                 <i class="bi bi-check-circle-fill me-2"></i>
                 <?= htmlspecialchars($register_success) ?>
             </div>
         <?php endif; ?>
 
-        <?php if (isset($register_error)): ?>
+        <?php if ($register_error): ?>
             <div class="error-msg">
                 <i class="bi bi-exclamation-triangle-fill me-2"></i>
                 <?= htmlspecialchars($register_error) ?>
             </div>
         <?php endif; ?>
 
+        <?php if (!$register_success): ?>
         <form action="register-form.php" method="POST" id="registerForm">
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">First Name</label>
                     <div class="input-wrap">
                         <i class="bi bi-person"></i>
-                        <input type="text" name="fname" class="form-input" placeholder="Juan" required>
+                        <input type="text" name="fname" class="form-input" placeholder="Juan" value="<?= htmlspecialchars($_POST['fname'] ?? '') ?>" required>
                     </div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Last Name</label>
                     <div class="input-wrap">
                         <i class="bi bi-person"></i>
-                        <input type="text" name="lname" class="form-input" placeholder="dela Cruz" required>
+                        <input type="text" name="lname" class="form-input" placeholder="dela Cruz" value="<?= htmlspecialchars($_POST['lname'] ?? '') ?>" required>
                     </div>
                 </div>
             </div>
@@ -178,7 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label class="form-label">Email Address</label>
                 <div class="input-wrap">
                     <i class="bi bi-envelope"></i>
-                    <input type="email" name="email" class="form-input" placeholder="juan@example.com" required>
+                    <input type="email" name="email" class="form-input" placeholder="juan@example.com" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" required>
                 </div>
             </div>
 
@@ -186,7 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label class="form-label">Mobile Number</label>
                 <div class="input-wrap">
                     <i class="bi bi-phone"></i>
-                    <input type="tel" name="mobile" class="form-input" placeholder="+63 9XX XXX XXXX" required>
+                    <input type="tel" name="mobile" class="form-input" placeholder="+63 9XX XXX XXXX" value="<?= htmlspecialchars($_POST['mobile'] ?? '') ?>" required>
                 </div>
             </div>
 
@@ -196,8 +256,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <i class="bi bi-briefcase"></i>
                     <select name="role" class="form-select" required>
                         <option value="">-- Select Role --</option>
-                        <option value="Farmer">Farmer</option>
-                        <option value="Agriculture Official">Agriculture Official</option>
+                        <option value="Farmer" <?= ($_POST['role'] ?? '') === 'Farmer' ? 'selected' : '' ?>>Farmer</option>
+                        <option value="Agriculture Official" <?= ($_POST['role'] ?? '') === 'Agriculture Official' ? 'selected' : '' ?>>Agriculture Official</option>
                     </select>
                 </div>
             </div>
@@ -248,12 +308,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="footer-link">
             Already have an account? <a href="login.php">Log In</a>
         </div>
+        <?php endif; ?>
 
         <div style="margin-top: 30px; font-size: 0.7rem; color: rgba(255,255,255,0.4);">
             © 2026 AgriTrace Technologies
         </div>
     </div>
 
+    <!-- Your existing JavaScript remains exactly the same -->
     <script>
         // Password Visibility Toggle
         function toggleVisibility() {
@@ -276,7 +338,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         const submitBtn = document.getElementById('submitBtn');
         const confirmPass = document.querySelector('input[name="cpassword"]');
         
-        const requirements = {
+                const requirements = {
             length: (val) => val.length >= 8,
             number: (val) => /[0-9]/.test(val),
             special: (val) => /[!@#$%^&*(),.?":{}|<>]/.test(val),

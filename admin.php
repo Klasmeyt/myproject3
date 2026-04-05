@@ -547,7 +547,7 @@ if (!in_array($user_role, $allowed_roles)) {
             <div class="nav-item" onclick="showPanel('geo')"><i class="bi bi-geo-alt"></i> Geo-Mapping</div>
             <div class="nav-item" onclick="showPanel('audit')"><i class="bi bi-lock"></i> Audit & Security</div>
             <div class="nav-item" onclick="showPanel('reports')"><i class="bi bi-bar-chart"></i> Reports & Analytics</div>
-            <a href="logout.php" style="text-decoration: none;">
+            <a href="login.php" style="text-decoration: none;">
                 <div class="nav-item" style="color: #fca5a5; margin-top: 20px;"><i class="bi bi-box-arrow-right"></i> Logout</div>
             </a>
         </nav>

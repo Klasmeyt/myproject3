@@ -137,6 +137,25 @@ CREATE TABLE `officer_permissions` (
   FOREIGN KEY (`officer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Officer Profiles Table (for extended user profile data)
+CREATE TABLE `officer_profiles` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL,
+  `gov_id` varchar(100) DEFAULT NULL,
+  `department` varchar(255) DEFAULT NULL,
+  `position` varchar(255) DEFAULT NULL,
+  `office` varchar(255) DEFAULT NULL,
+  `assigned_region` varchar(255) DEFAULT NULL,
+  `municipality` varchar(255) DEFAULT NULL,
+  `province` varchar(255) DEFAULT NULL,
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_user_profile` (`user_id`),
+  KEY `user_id` (`user_id`),
+  FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Insert Sample Data
 INSERT INTO `users` (`firstName`, `lastName`, `email`, `password`, `mobile`, `role`, `status`) VALUES
 ('System', 'Admin', 'admin@agritrace.ph', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+63 999 000 0001', 'Admin', 'Active');
@@ -171,3 +190,12 @@ BEGIN
     VALUES (NEW.id, 'UPDATE', 'users', NEW.id, JSON_OBJECT('old_role', OLD.role, 'new_role', NEW.role), 'SYSTEM');
 END//
 DELIMITER ;
+
+
+-- Update ALL users with proper password hash ('password')
+UPDATE `users` SET 
+    `password` = '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'
+WHERE `email` IN ('admin@agritrace.ph', 'vennethcuala@gmail.com', 'markreagan@gmail.com', 'laniecuala@gmail.com');
+
+-- Add mobile column to users table if needed
+ALTER TABLE users ADD COLUMN mobile VARCHAR(20) NULL;
