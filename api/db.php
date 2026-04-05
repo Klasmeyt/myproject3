@@ -199,6 +199,83 @@ case 'saveOfficerPermissions':
         $pdo->rollback();
         echo json_encode(['error' => $e->getMessage()]);
     }
-    break;    
+    break;
+    
+    // Add this case to your api/db.php switch statement
+case 'query':
+    $table = $_GET['table'] ?? '';
+    $join = $_GET['join'] ?? '';
+    $where = $_GET['where'] ?? '';
+    
+    $sql = "SELECT farms.*, users.firstName, users.lastName, users.email, users.mobile, users.role 
+            FROM `$table` $join";
+    
+    if ($where) $sql .= " WHERE $where";
+    $sql .= " ORDER BY createdAt DESC";
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute();
+    echo json_encode([
+        'success' => true,
+        'data' => $stmt->fetchAll(PDO::FETCH_ASSOC),
+        'count' => $stmt->rowCount()
+    ]);
+    break;
+
+    // Add this inside your main switch/case in api/db.php
+
+// Add this case inside your API switch/if block
+case 'getAuditLogs':
+    $sql = "SELECT al.*, 
+            u.firstName, u.lastName, u.email as userEmail 
+            FROM audit_log al 
+            LEFT JOIN users u ON al.userId = u.id 
+            ORDER BY al.createdAt DESC 
+            LIMIT 500";
+    $result = $conn->query($sql);
+    $logs = [];
+    while ($row = $result->fetch_assoc()) {
+        $logs[] = $row;
+    }
+    echo json_encode($logs);
+    break;
+
+    case 'getDashboardStats':
+    $stats = [
+        'totalUsers' => 0,
+        'totalFarms' => 0,
+        'totalLivestock' => 0,
+        'pendingReports' => 0
+    ];
+
+    // USERS - Your table has 4 records
+    $stmt = $GLOBALS['pdo']->query("SELECT COUNT(*) as cnt FROM users");
+    $stats['totalUsers'] = $stmt->fetch(PDO::FETCH_ASSOC)['cnt'];
+
+    // FARMS - Approved only
+    $stmt = $GLOBALS['pdo']->query("SELECT COUNT(*) as cnt FROM farms WHERE status = 'Approved'");
+    $stats['totalFarms'] = $stmt->fetch(PDO::FETCH_ASSOC)['cnt'];
+
+    // LIVESTOCK - Sum qty
+    $stmt = $GLOBALS['pdo']->query("SELECT COALESCE(SUM(qty), 0) as cnt FROM livestock");
+    $stats['totalLivestock'] = $stmt->fetch(PDO::FETCH_ASSOC)['cnt'];
+
+    // PENDING REPORTS
+    $stmt = $GLOBALS['pdo']->query("SELECT COUNT(*) as cnt FROM incidents WHERE status = 'Pending'");
+    $pendingIncidents = $stmt->fetch(PDO::FETCH_ASSOC)['cnt'];
+    $stmt = $GLOBALS['pdo']->query("SELECT COUNT(*) as cnt FROM public_reports WHERE status = 'Pending'");
+    $pendingPublic = $stmt->fetch(PDO::FETCH_ASSOC)['cnt'];
+    $stats['pendingReports'] = $pendingIncidents + $pendingPublic;
+
+    sendResponse([
+        'success' => true,
+        'debug' => [
+            'users_raw' => $stats['totalUsers'],
+            'farms_raw' => $stats['totalFarms'],
+            'livestock_raw' => $stats['totalLivestock']
+        ],
+        'stats' => $stats
+    ]);
+    break;
 }
 ?>

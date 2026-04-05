@@ -142,3 +142,32 @@ INSERT INTO `users` (`firstName`, `lastName`, `email`, `password`, `mobile`, `ro
 ('System', 'Admin', 'admin@agritrace.ph', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+63 999 000 0001', 'Admin', 'Active');
 
 -- Password for all users: 'password' (hashed)
+
+
+
+SELECT farms.*, users.firstName, users.lastName, 
+       (SELECT SUM(qty) FROM livestock WHERE farmId = farms.id) as total_livestock
+FROM farms 
+LEFT JOIN users ON farms.ownerId = users.id;
+
+
+
+
+-- Create a Trigger to auto-log INSERT/UPDATE/DELETE on Users table
+DELIMITER //
+CREATE TRIGGER trg_audit_users
+AFTER INSERT ON users
+FOR EACH ROW
+BEGIN
+    INSERT INTO audit_log (userId, action, tableName, recordId, details, ipAddress)
+    VALUES (NEW.id, 'CREATE', 'users', NEW.id, JSON_OBJECT('email', NEW.email, 'role', NEW.role), 'SYSTEM');
+END//
+
+CREATE TRIGGER trg_audit_users_update
+AFTER UPDATE ON users
+FOR EACH ROW
+BEGIN
+    INSERT INTO audit_log (userId, action, tableName, recordId, details, ipAddress)
+    VALUES (NEW.id, 'UPDATE', 'users', NEW.id, JSON_OBJECT('old_role', OLD.role, 'new_role', NEW.role), 'SYSTEM');
+END//
+DELIMITER ;
