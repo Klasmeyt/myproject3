@@ -199,3 +199,13 @@ WHERE `email` IN ('admin@agritrace.ph', 'vennethcuala@gmail.com', 'markreagan@gm
 
 -- Add mobile column to users table if needed
 ALTER TABLE users ADD COLUMN mobile VARCHAR(20) NULL;
+
+ALTER TABLE `officer_profiles` 
+ADD COLUMN `profile_pix` VARCHAR(255) DEFAULT NULL AFTER `user_id`;
+
+-- Ensure the column exists
+ALTER TABLE `officer_profiles` 
+ADD COLUMN IF NOT EXISTS `profile_pix` VARCHAR(255) DEFAULT NULL AFTER `user_id`;
+
+-- Insert a profile record for the user if it doesn't exist (assuming user ID 2 for Venneth)
+INSERT IGNORE INTO `officer_profiles` (user_id) VALUES (2);

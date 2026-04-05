@@ -185,6 +185,101 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         echo "Error updating profile: " . $e->getMessage();
     }
 }
+// Profile Update Handler - ADD THIS AFTER DATABASE CONNECTION
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['action'] === 'update_profile') {
+    header('Content-Type: application/json');
+    
+    try {
+        $user_id = (int)$_POST['user_id'];
+        
+        // 1. Handle Profile Picture Upload
+        $profile_pic_path = $user_profile['profile_pix'] ?? null;
+        if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] === UPLOAD_ERR_OK) {
+            $upload_dir = 'uploads/profiles/';
+            if (!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0755, true);
+            }
+            
+            $file_extension = strtolower(pathinfo($_FILES['profile_pic']['name'], PATHINFO_EXTENSION));
+            $allowed_extensions = ['jpg', 'jpeg', 'png', 'gif'];
+            
+            if (in_array($file_extension, $allowed_extensions)) {
+                $new_filename = $user_id . '_' . time() . '.' . $file_extension;
+                $upload_path = $upload_dir . $new_filename;
+                
+                if (move_uploaded_file($_FILES['profile_pic']['tmp_name'], $upload_path)) {
+                    $profile_pic_path = $upload_path;
+                    
+                    // Delete old profile pic if exists
+                    if ($user_profile['profile_pix'] && file_exists($user_profile['profile_pix'])) {
+                        unlink($user_profile['profile_pix']);
+                    }
+                }
+            }
+        }
+        
+        $pdo->beginTransaction();
+        
+        // 2. Update Users Table
+        $stmt = $pdo->prepare("
+            UPDATE users SET 
+                firstName = ?, lastName = ?, mobile = ?,
+                updatedAt = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ");
+        $stmt->execute([
+            $_POST['firstName'],
+            $_POST['lastName'],
+            $_POST['mobile'] ?? null,
+            $user_id
+        ]);
+        
+        // 3. Update/Insert Officer Profile
+        $stmt = $pdo->prepare("
+            INSERT INTO officer_profiles 
+            (user_id, gov_id, department, position, office, assigned_region, municipality, province, profile_pix)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+                gov_id = VALUES(gov_id),
+                department = VALUES(department),
+                position = VALUES(position),
+                office = VALUES(office),
+                assigned_region = VALUES(assigned_region),
+                municipality = VALUES(municipality),
+                province = VALUES(province),
+                profile_pix = VALUES(profile_pix),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+        $stmt->execute([
+            $user_id,
+            $_POST['gov_id'] ?? null,
+            $_POST['department'] ?? null,
+            $_POST['position'] ?? null,
+            $_POST['office'] ?? null,
+            $_POST['assigned_region'] ?? null,
+            $_POST['municipality'] ?? null,
+            $_POST['province'] ?? null,
+            $profile_pic_path
+        ]);
+        
+        // 4. Handle Password Change
+        if (!empty($_POST['new_password'])) {
+            $hashed_password = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
+            $stmt = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
+            $stmt->execute([$hashed_password, $user_id]);
+        }
+        
+        $pdo->commit();
+        
+        echo json_encode(['success' => true, 'message' => 'Profile updated successfully!']);
+        
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        error_log('Profile update error: ' . $e->getMessage());
+        echo json_encode(['success' => false, 'message' => 'Update failed: ' . $e->getMessage()]);
+    }
+    exit;
+}
 ?>
 
 <!DOCTYPE html>
@@ -541,6 +636,356 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     gap: 20px !important;
   }
 }
+
+/* Profile Styles - Mobile First */
+.profile-container {
+  padding: 20px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.profile-card {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.profile-header {
+  background: linear-gradient(135deg, var(--c-brand-mid), var(--c-brand-dark));
+  color: white;
+  padding: 40px 30px 30px;
+  text-align: center;
+  position: relative;
+}
+
+.avatar-circle {
+  width: 100px;
+  height: 100px;
+  background: rgba(255,255,255,0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin: 0 auto 16px;
+  border: 4px solid rgba(255,255,255,0.3);
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+
+.profile-role {
+  font-size: 0.9rem;
+  opacity: 0.9;
+  margin: 0;
+  font-weight: 500;
+}
+
+.profile-info {
+  padding: 30px;
+}
+
+.info-section {
+  margin-bottom: 28px;
+}
+
+.info-section h3 {
+  font-size: 1.1rem;
+  color: var(--c-brand-dark);
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--c-slate-100);
+}
+
+.info-label {
+  color: var(--c-text-sub);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.info-value {
+  font-weight: 600;
+  color: var(--c-text-main);
+  text-align: right;
+}
+
+.profile-actions {
+  padding: 0 30px 30px;
+  text-align: center;
+}
+
+.btn-edit {
+  background: linear-gradient(135deg, var(--c-brand-accent), #059669);
+  color: white;
+  border: none;
+  padding: 16px 32px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 auto;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 16px rgba(16,185,129,0.3);
+}
+
+.btn-edit:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(16,185,129,0.4);
+}
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s ease;
+}
+
+.modal-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 20px;
+  max-width: 95vw;
+  max-height: 90vh;
+  width: 100%;
+  max-width: 500px;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  transform: scale(0.8) translateY(20px);
+  transition: all 0.3s ease;
+}
+
+.modal-overlay.active .modal-content {
+  transform: scale(1) translateY(0);
+}
+
+.modal-header {
+  padding: 24px 28px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--c-slate-100);
+  margin-bottom: 24px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.3rem;
+  color: var(--c-brand-dark);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--c-text-sub);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.modal-close:hover {
+  background: var(--c-slate-100);
+  color: var(--c-text-main);
+}
+
+.profile-pic-upload {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.profile-pic-upload img {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 4px solid var(--c-slate-100);
+  margin-bottom: 12px;
+}
+
+.btn-upload {
+  background: var(--c-slate-50);
+  border: 2px dashed var(--c-slate-200);
+  color: var(--c-text-sub);
+  padding: 12px 24px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-upload:hover {
+  background: var(--c-brand-accent);
+  color: white;
+  border-color: var(--c-brand-accent);
+}
+
+.form-section h4 {
+  font-size: 1.1rem;
+  color: var(--c-brand-dark);
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--c-slate-100);
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+@media (min-width: 480px) {
+  .form-row {
+    flex-direction: row;
+  }
+  .form-row .form-group {
+    flex: 1;
+  }
+}
+
+.modal-actions {
+  padding: 24px;
+  border-top: 1px solid var(--c-slate-100);
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.btn-cancel, .btn-save {
+  padding: 14px 24px;
+  border-radius: 12px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-cancel {
+  background: var(--c-slate-100);
+  color: var(--c-text-main);
+}
+
+.btn-save {
+  background: linear-gradient(135deg, var(--c-brand-accent), #059669);
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-cancel:hover { background: var(--c-slate-200); }
+.btn-save:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(16,185,129,0.4); }
+
+/* Responsive */
+@media (max-width: 480px) {
+  .profile-container { padding: 15px; }
+  .profile-info { padding: 20px; }
+  .info-item { flex-direction: column; gap: 4px; text-align: left; }
+  .info-value { text-align: left; }
+}
+
+.searchable-dropdown {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.searchable-dropdown input {
+  width: 100%;
+  padding: 14px 16px 14px 44px;
+  border: 2px solid var(--c-slate-200);
+  border-radius: 12px;
+  font-size: 1rem;
+  background: #fff url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTE5IDExQzE5IDguMDg4IDExLjkyMiA1IDE5IDVIMTZWMTZIMTZWMTRIMTZWMTZIMTYiIGZpbGw9IiM2NDc0OEIiLz4KPC9zdmc+') no-repeat 16px center;
+  background-size: 18px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.searchable-dropdown input:focus {
+  border-color: var(--c-brand-accent);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.dropdown-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--c-slate-200);
+  border-radius: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  display: none;
+  margin-top: 4px;
+}
+
+.dropdown-list.active {
+  display: block;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dropdown-item {
+  padding: 14px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--c-slate-100);
+  font-size: 0.95rem;
+  transition: all 0.2s;
+}
+
+.dropdown-item:hover,
+.dropdown-item.selected {
+  background: var(--c-brand-accent);
+  color: white;
+}
+
+.dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.required {
+  color: var(--c-danger);
+}
   </style>
 </head>
 <body>
@@ -579,7 +1024,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
       
       <div class="nav-divider"></div>
       
-      <div class="nav-item logout" onclick="window.location.href='logout.php'">
+      <div class="nav-item logout" onclick="window.location.href='index.php'">
         <i class="bi bi-power"></i> <span>Logout</span>
       </div>
     </nav>
@@ -970,96 +1415,85 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 </section>
 
     <!-- PROFILE -->
-    <section id="sec-profile" class="section">
-    <div class="profile-form">
-        <div class="profile-header">
-            <div class="avatar-circle">
-                <?php echo strtoupper(substr($user_profile['firstName'] ?? 'U', 0, 1)); ?>
-            </div>
-            <h2>Edit Official Profile</h2>
-            <p class="subtitle">Update your personal and professional information</p>
+<section id="sec-profile" class="section">
+  <div class="profile-container">
+    <!-- Profile Display Card -->
+    <div class="profile-card">
+      <div class="profile-header">
+        <div class="avatar-circle" id="profileAvatar">
+          <?php if (!empty($user_profile['profile_pix'])): ?>
+            <img src="<?php echo htmlspecialchars($user_profile['profile_pix']); ?>" alt="Profile" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">
+          <?php else: ?>
+            <?php echo strtoupper(substr($user_profile['firstName'] ?? 'U', 0, 1)); ?>
+          <?php endif; ?>
+        </div>
+        <h2 id="profileName"><?php echo htmlspecialchars(($user_profile['firstName'] ?? '') . ' ' . ($user_profile['lastName'] ?? '')); ?></h2>
+        <p class="profile-role"><?php echo htmlspecialchars($user_role); ?></p>
+      </div>
+
+      <!-- Profile Info Sections -->
+      <div class="profile-info">
+        <div class="info-section">
+          <h3><i class="bi bi-person"></i> Personal Info</h3>
+          <div class="info-item">
+            <span class="info-label">Email</span>
+            <span class="info-value" id="profileEmail"><?php echo htmlspecialchars($user_profile['email'] ?? ''); ?></span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Mobile</span>
+            <span class="info-value" id="profileMobile"><?php echo htmlspecialchars($user_profile['mobile'] ?? 'N/A'); ?></span>
+          </div>
         </div>
 
-        <form id="profileForm" method="POST" class="profile-form">
-            
-            <div class="form-section">
-                <h3 class="section-title"><i class="icon">👤</i> Personal Information</h3>
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>First Name</label>
-                        <input type="text" name="firstName" value="<?php echo htmlspecialchars($user_profile['firstName'] ?? ''); ?>" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Last Name</label>
-                        <input type="text" name="lastName" value="<?php echo htmlspecialchars($user_profile['lastName'] ?? ''); ?>" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Email Address</label>
-                        <input type="email" value="<?php echo htmlspecialchars($user_profile['email'] ?? ''); ?>" disabled class="input-disabled">
-                        <small>Email cannot be changed.</small>
-                    </div>
-                    <div class="form-group">
-                        <label>Mobile Number</label>
-                        <input type="tel" name="mobile" value="<?php echo htmlspecialchars($user_profile['mobile'] ?? ''); ?>" placeholder="09XXXXXXXXX">
-                    </div>
-                </div>
-            </div>
-
-            <div class="form-section">
-                <h3 class="section-title"><i class="icon">💼</i> Work Information</h3>
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>Gov't / Employee ID</label>
-                        <input type="text" name="gov_id" value="<?php echo htmlspecialchars($user_profile['gov_id'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group">
-                        <label>Department</label>
-                        <input type="text" name="department" value="<?php echo htmlspecialchars($user_profile['department'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group">
-                        <label>Position / Title</label>
-                        <input type="text" name="position" value="<?php echo htmlspecialchars($user_profile['position'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group">
-                        <label>Office Location</label>
-                        <input type="text" name="office" value="<?php echo htmlspecialchars($user_profile['office'] ?? ''); ?>">
-                    </div>
-                </div>
-            </div>
-
-            <div class="form-section">
-                <h3 class="section-title"><i class="icon">📍</i> Assigned Region</h3>
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>Region</label>
-                        <input type="text" name="assigned_region" value="<?php echo htmlspecialchars($user_profile['assigned_region'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group">
-                        <label>Province</label>
-                        <input type="text" name="province" value="<?php echo htmlspecialchars($user_profile['province'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group">
-                        <label>Municipality</label>
-                        <input type="text" name="municipality" value="<?php echo htmlspecialchars($user_profile['municipality'] ?? ''); ?>">
-                    </div>
-                </div>
-            </div>
-
-            <div class="form-section">
-                <h3 class="section-title"><i class="icon">🔒</i> Security</h3>
-                <div class="form-group">
-                    <label>New Password (Leave blank to keep current)</label>
-                    <input type="password" name="new_password" placeholder="••••••••">
-                </div>
-            </div>
-
-            <div class="form-actions">
-                <button type="button" class="btn-secondary" onclick="window.history.back()">Cancel</button>
-                <button type="submit" class="btn-primary">Save Changes</button>
-            </div>
-        </form>
+        <div class="info-section">
+          <h3><i class="bi bi-briefcase"></i> Work Info</h3>
+          <div class="info-item">
+            <span class="info-label">Gov't ID</span>
+            <span class="info-value" id="profileGovId"><?php echo htmlspecialchars($user_profile['gov_id'] ?? 'N/A'); ?></span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Department</span>
+            <span class="info-value" id="profileDepartment"><?php echo htmlspecialchars($user_profile['department'] ?? 'N/A'); ?></span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Position</span>
+            <span class="info-value" id="profilePosition"><?php echo htmlspecialchars($user_profile['position'] ?? 'N/A'); ?></span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Office</span>
+            <span class="info-value" id="profileOffice"><?php echo htmlspecialchars($user_profile['office'] ?? 'N/A'); ?></span>
+          </div>
         </div>
-</div>
+
+        <div class="info-section">
+          <h3><i class="bi bi-geo-alt"></i> Assignment</h3>
+          <div class="info-item">
+            <span class="info-label">Region</span>
+            <span class="info-value" id="profileRegion"><?php echo htmlspecialchars($user_profile['assigned_region'] ?? 'N/A'); ?></span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Province</span>
+            <span class="info-value" id="profileProvince"><?php echo htmlspecialchars($user_profile['province'] ?? 'N/A'); ?></span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Municipality</span>
+            <span class="info-value" id="profileMunicipality"><?php echo htmlspecialchars($user_profile['municipality'] ?? 'N/A'); ?></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Edit Button -->
+      <div class="profile-actions">
+        <button class="btn-edit" onclick="openProfileEditor()">
+          <i class="bi bi-pencil-square"></i>
+          Edit Profile
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Profile Modal Container -->
+  <div id="editProfileModal" class="modal-overlay" style="display: none;"></div>
 </section>
 
   </main>
@@ -1337,77 +1771,47 @@ function showLoading(show = true) {
     overlay.style.display = show ? 'flex' : 'none';
   }
 }
-
-    // Profile update - FIXED
-    function updateProfile(event) {
-      event.preventDefault();
-      const formData = {
-        mobile: document.getElementById('mobile').value,
-        gov_id: document.getElementById('gov_id').value,
-        department: document.getElementById('department').value,
-        position: document.getElementById('position').value,
-        assigned_region: document.getElementById('assigned_region').value,
-        office: document.getElementById('office').value,
-        municipality: document.getElementById('municipality').value,
-        province: document.getElementById('province').value
-      };
-
-      // Simulate API call
-      fetch('api/update_profile.php', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest'
-        },
-        body: JSON.stringify({
-          user_id: <?php echo $user_id; ?>,
-          ...formData
-        })
-      })
-      .then(response => response.json())
-      .then(data => {
-        if (data.success) {
-          alert('Profile updated successfully!');
-          location.reload(); // Refresh to show updated data
-        } else {
-          alert('Update failed: ' + (data.message || 'Unknown error'));
-        }
-      })
-      .catch(error => {
-        alert('Error updating profile: ' + error.message);
-        console.error('Profile update error:', error);
-      });
+// Load Edit Profile Modal
+async function loadEditProfileModal() {
+    const modalContainer = document.getElementById('editProfileModal');
+    try {
+        const response = await fetch('edit-profile-modal.php');
+        modalContainer.innerHTML = await response.text();
+        
+        // Re-initialize event listeners after loading
+        initProfileModalListeners();
+    } catch (error) {
+        console.error('Failed to load edit profile modal:', error);
+        showToast('Failed to load profile editor', 'error');
     }
+}
 
-    // Initialize on page load
-    document.addEventListener('DOMContentLoaded', function() {
-      // Auto-hide loading overlay if present
-      const loadingOverlay = document.getElementById('loadingOverlay');
-      if (loadingOverlay) {
-        loadingOverlay.style.display = 'none';
-      }
+function initProfileModalListeners() {
+    // Open modal button
+    const editButtons = document.querySelectorAll('.btn-edit');
+    editButtons.forEach(btn => {
+        btn.onclick = function() {
+            loadEditProfileModal().then(() => {
+                openEditProfile();
+            });
+        };
     });
+    
+    // Global modal functions for iframe/modal communication
+    window.openEditProfile = function() {
+        document.getElementById('editProfileModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+    };
+    
+    window.closeEditProfile = function() {
+        document.getElementById('editProfileModal').classList.remove('active');
+        document.body.style.overflow = '';
+    };
+}
 
-    // Profile form handler
-document.getElementById('profileForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    
-    const formData = new FormData(this);
-    formData.append('user_id', <?php echo $user_id; ?>);
-    
-    fetch('update_profile.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.text())
-    .then(data => {
-        showToast('✅ Profile updated successfully!', 'success');
-        setTimeout(() => location.reload(), 1500);
-    })
-    .catch(error => {
-        showToast('❌ Update failed!', 'error');
-        console.error('Profile update error:', error);
-    });
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    initProfileModalListeners();
 });
   </script>
 

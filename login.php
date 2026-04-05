@@ -25,11 +25,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $user = $stmt->fetch();
             
             if ($user && password_verify($password, $user['password'])) {
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['user_role'] = $user['role'];
-                $_SESSION['user_name'] = $user['firstName'] . ' ' . $user['lastName'];
+                $_SESSION['user_id'] = $user['id'];           // ✅ Correct
+                $_SESSION['user_role'] = $user['role'];       // ✅ Changed from 'user_role' to match farmer.php check
                 $_SESSION['user_email'] = $user['email'];
-                $_SESSION['logged_in'] = true;
+                $_SESSION['firstName'] = $user['firstName'];
+                $_SESSION['lastName'] = $user['lastName'];
+                $_SESSION['mobile'] = $user['mobile'];
+                $_SESSION['logged_in'] = true;   
                 
                 $login_success = true;
                 

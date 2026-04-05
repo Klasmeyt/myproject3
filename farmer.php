@@ -1,362 +1,348 @@
 <?php
 session_start();
 
-// AUTHENTICATION CHECK - ADD THIS TO ALL PANEL PAGES
-if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
-    header('Location: login.php?redirect=' . urlencode($_SERVER['PHP_SELF']));
+// 1. Authentication Check
+if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || $_SESSION['user_role'] !== 'Farmer') {
+    header('Location: login.php');
     exit;
 }
 
-$user_role = $_SESSION['user_role'] ?? '';
+// 2. Database Connection
+try {
+    $pdo = new PDO("mysql:host=localhost;dbname=myproject4;charset=utf8mb4", "root", "", [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+    ]);
+} catch(PDOException $e) {
+    die("Database connection failed. Please try again later.");
+}
 
-// ROLE CHECK
-$allowed_roles = match(basename($_SERVER['PHP_SELF'])) {
-    'admin.php' => ['Admin'],
-    'farmer.php' => ['Farmer'],
-    'agri.php' => ['Agriculture Official'],
-    default => []
-};
+// 3. User Context
+$userId = $_SESSION['user_id'] ?? 0;
+$firstName = $_SESSION['firstName'] ?? 'Farmer';
 
-if (!in_array($user_role, $allowed_roles)) {
-    header('Location: index.php?error=access_denied');
-    exit;
+// 4. Data Fetching
+$totalLivestock = 0;
+$activeIncidents = 0;
+$farmStatus = 'No Farms Found';
+
+try {
+    // Total Livestock
+    $stmt = $pdo->prepare("SELECT COALESCE(SUM(l.qty), 0) as total FROM livestock l JOIN farms f ON l.farmId = f.id WHERE f.ownerId = ?");
+    $stmt->execute([$userId]);
+    $totalLivestock = $stmt->fetch()['total'];
+
+    // Active Incidents
+    $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM incidents WHERE reporterId = ? AND status != 'Resolved'");
+    $stmt->execute([$userId]);
+    $activeIncidents = $stmt->fetch()['total'];
+
+    // Farm Status
+    $stmt = $pdo->prepare("SELECT status, COUNT(*) as count FROM farms WHERE ownerId = ? GROUP BY status");
+    $stmt->execute([$userId]);
+    $farmData = $stmt->fetch();
+    if ($farmData) {
+        $farmStatus = ($farmData['status'] == 'Approved') ? 'Verified Active (' . $farmData['count'] . ')' : 'Pending Approval';
+    }
+} catch (PDOException $e) {
+    error_log($e->getMessage());
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AgriTrace+ | Farmer Portal</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Syne:wght@700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="assets/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    
+   <style>
+    :root {
+        --primary-deep: #064e3b;   /* Dark Forest Green (Sidebar) */
+        --primary-bright: #10b981; /* Vibrant Mint (Buttons/Active) */
+        --primary-hover: #059669;  /* Deep Mint */
+        --bg-main: #f9fafb;        /* Light Grey/White Background */
+        --text-dark: #064e3b;      /* Matching dark text */
+        --text-grey: #6b7280;      /* Muted text */
+        --white: #ffffff;
+        --sidebar-width: 280px;
+        --transition: all 0.25s ease;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        background-color: var(--bg-main);
+        color: var(--text-dark);
+    }
+
+    /* --- Sidebar Navigation (Dark Forest) --- */
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: calc(-1 * var(--sidebar-width));
+        width: var(--sidebar-width);
+        height: 100%;
+        background: var(--primary-deep); /* Dark Green */
+        z-index: 2000;
+        display: flex;
+        flex-direction: column;
+        transition: var(--transition);
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .sidebar.active { left: 0; }
+
+    .sidebar-header {
+        padding: 30px 24px;
+    }
+
+    .brand {
+        font-size: 1.6rem;
+        font-weight: 800;
+        color: var(--white);
+        letter-spacing: -0.5px;
+    }
+
+    .brand span { color: var(--primary-bright); }
+
+    .portal-label {
+        font-size: 0.7rem;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.5);
+        text-transform: uppercase;
+        margin-top: -5px;
+        display: block;
+    }
+
+    /* Navigation Links */
+    .nav-list { flex: 1; padding: 10px 16px; }
+
+    .nav-item {
+        display: flex;
+        align-items: center;
+        padding: 12px 16px;
+        margin-bottom: 4px;
+        border-radius: 8px;
+        color: rgba(255, 255, 255, 0.7);
+        text-decoration: none;
+        font-weight: 500;
+        transition: var(--transition);
+    }
+
+    .nav-item i { font-size: 1.2rem; margin-right: 12px; }
+
+    /* The "Active" state from the image */
+    .nav-item.active {
+        background: var(--primary-bright);
+        color: var(--white);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+    }
+
+    .nav-item:hover:not(.active) {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--white);
+    }
+
+    /* --- Bottom User Card --- */
+    .sidebar-footer {
+        padding: 20px;
+        background: rgba(0, 0, 0, 0.2); /* Slightly darker bottom */
+    }
+
+    .user-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px;
+    }
+
+    .avatar {
+        width: 40px;
+        height: 40px;
+        background: var(--primary-bright);
+        color: var(--white);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+    }
+
+    .user-name { font-size: 0.9rem; font-weight: 600; color: white; }
+    .user-role { font-size: 0.75rem; color: rgba(255, 255, 255, 0.5); }
+
+    /* --- Top Bar --- */
+    .top-bar {
+        padding: 15px 25px;
+        background: var(--white);
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .menu-toggle {
+        font-size: 1.5rem;
+        background: none;
+        border: none;
+        color: var(--primary-deep);
+        cursor: pointer;
+    }
+
+    /* --- Content Cards --- */
+    .content { padding: 30px; }
+
+    .card {
+        background: var(--white);
+        padding: 24px;
+        border-radius: 12px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+
+    /* Refresh Button Style from image */
+    .btn-refresh {
+        background: var(--primary-bright);
+        color: white;
+        border: none;
+        padding: 8px 18px;
+        border-radius: 8px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+    }
+
+    .btn-refresh:hover { background: var(--primary-hover); }
+
+    .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.3);
+        z-index: 1500;
+        opacity: 0;
+        visibility: hidden;
+        transition: var(--transition);
+    }
+
+    .overlay.show { opacity: 1; visibility: visible; }
+</style>
 </head>
-<body class="panel-page" style="background: var(--c-slate-50);">
+<body>
 
-  <!-- Sidebar Overlay -->
-  <div class="sidebar-overlay" id="farmer-overlay" onclick="closePanelSidebar('farmer')"></div>
-  
-  <!-- Sidebar -->
-  <aside class="panel-sidebar" id="farmer-sidebar">
-    <div class="panel-sidebar-header">
-      <div class="panel-sidebar-logo">Agri<span>Trace+</span></div>
-      <div class="panel-sidebar-sub">Farmer Portal</div>
-    </div>
-    <nav class="panel-nav">
-      <div class="panel-nav-item active" onclick="showPanel('farmer','dashboard')">
-        <i class="bi bi-speedometer2"></i> Dashboard
-      </div>
-      <div class="panel-nav-item" onclick="showPanel('farmer','farm')">
-        <i class="bi bi-house-gear"></i> Farm Registration
-      </div>
-      <div class="panel-nav-item" onclick="showPanel('farmer','livestock')">
-        <i class="bi bi-journal-check"></i> Livestock Monitoring
-      </div>
-      <div class="panel-nav-item" onclick="showPanel('farmer','incidents')">
-        <i class="bi bi-exclamation-triangle"></i> Incident Reporting
-      </div>
-      <div class="panel-nav-item" onclick="showPanel('farmer','notifications')">
-        <i class="bi bi-bell"></i> Notifications
-      </div>
-      <div class="panel-nav-item" onclick="showPanel('farmer','map')">
-        <i class="bi bi-geo-alt"></i> Farm Map
-      </div>
-      <div class="panel-nav-item" onclick="showPanel('farmer','profile')">
-        <i class="bi bi-person-circle"></i> Profile
-      </div>
-      <div class="panel-nav-divider"></div>
-      <div class="panel-nav-item logout" onclick="window.location.href='index.php'">
-        <i class="bi bi-power"></i> Logout
-      </div>
-    </nav>
-    <div class="panel-sidebar-footer">
-      <div class="panel-user-info">
-        <div class="panel-avatar">JD</div>
-        <div>
-          <div class="panel-user-name">Juan dela Cruz</div>
-          <div class="panel-user-role">Farmer</div>
-        </div>
-      </div>
-    </div>
-  </aside>
+    <div class="overlay" id="overlay" onclick="toggleMenu()"></div>
 
-  <!-- Main Content -->
-  <main class="panel-main">
-    <div class="panel-topbar">
-      <div style="display:flex; align-items:center; gap:12px;">
-        <button class="mobile-sidebar-toggle" onclick="openPanelSidebar('farmer')">
-          <i class="bi bi-list"></i>
-        </button>
-        <span class="panel-topbar-title" id="farmer-section-title">Dashboard</span>
-      </div>
-      <div class="topbar-right">
-        <button class="topbar-notif">
-          <i class="bi bi-bell"></i>
-          <span class="notif-dot"></span>
-        </button>
-        <div class="panel-avatar" style="width:32px;height:32px;font-size:0.8rem;">JD</div>
-      </div>
-    </div>
-
-    <div class="panel-content">
-      <!-- Farmer Dashboard -->
-      <div class="panel-section active" id="farmer-dashboard">
-        <div class="page-header-panel">
-          <h2>Good morning, Juan! 👋</h2>
-          <p>Here's an overview of your farm activities</p>
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="brand">Agri<span>Trace+</span></div>
+            <span class="portal-label">Farmer Portal</span>
         </div>
 
-        <div class="stat-cards">
-          <div class="stat-card">
-            <div class="stat-icon-wrap stat-icon-green">
-              <i class="bi bi-database"></i>
+        <nav class="nav-list">
+            <a href="#" class="nav-item active" onclick="navigate('Dashboard')">
+                <i class="bi bi-grid-1x2-fill"></i> Dashboard
+            </a>
+            <a href="#" class="nav-item" onclick="navigate('Farm Registration')">
+                <i class="bi bi-house-add"></i> Farm Registration
+            </a>
+            <a href="#" class="nav-item" onclick="navigate('Livestock Monitoring')">
+                <i class="bi bi-activity"></i> Livestock Monitoring
+            </a>
+            <a href="#" class="nav-item" onclick="navigate('Incident Reporting')">
+                <i class="bi bi-exclamation-triangle"></i> Incident Reporting
+            </a>
+            <a href="#" class="nav-item" onclick="navigate('Notifications')">
+                <i class="bi bi-bell"></i> Notifications
+                <span class="badge-alert">3</span>
+            </a>
+            <a href="#" class="nav-item" onclick="navigate('Farm Map')">
+                <i class="bi bi-geo-alt"></i> Farm Map
+            </a>
+            <a href="#" class="nav-item" onclick="navigate('Profile')">
+                <i class="bi bi-person-gear"></i> Profile
+            </a>
+            
+            <div style="margin-top: 20px; padding: 0 16px;">
+                <hr style="border: none; border-top: 1px solid #f1f5f9;">
             </div>
-            <div>
-              <div class="stat-num" id="farmer-total-livestock">24</div>
-              <div class="stat-lbl">Total Livestock</div>
+
+            <a href="logout.php" class="nav-item" style="color: #ef4444;">
+                <i class="bi bi-box-arrow-left"></i> Logout
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-card">
+                <div class="avatar"><?= substr($firstName, 0, 1) ?></div>
+                <div class="user-info">
+                    <span class="user-name"><?= $firstName ?></span>
+                    <span class="user-role"><?= $userRole ?></span>
+                </div>
             </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon-wrap stat-icon-amber">
-              <i class="bi bi-exclamation-triangle"></i>
-            </div>
-            <div>
-              <div class="stat-num" id="farmer-active-incidents">2</div>
-              <div class="stat-lbl">Active Incidents</div>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon-wrap stat-icon-blue">
-              <i class="bi bi-clipboard-check"></i>
-            </div>
-            <div>
-              <div class="stat-num" id="farmer-pending-inspections">1</div>
-              <div class="stat-lbl">Pending Inspections</div>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon-wrap stat-icon-green">
-              <i class="bi bi-patch-check-fill"></i>
-            </div>
-            <div>
-              <div class="stat-num">Active</div>
-              <div class="stat-lbl">Farm Status</div>
-            </div>
-          </div>
         </div>
+    </aside>
 
-        <div class="dash-row">
-          <div class="dash-card">
-            <div class="dash-card-header">
-              <span class="dash-card-title">Livestock by Type</span>
-            </div>
-            <div class="dash-card-body">
-              <div class="chart-container">
-                <canvas id="farmer-livestock-chart"></canvas>
-              </div>
-            </div>
-          </div>
-          <div class="dash-card">
-            <div class="dash-card-header">
-              <span class="dash-card-title">Notifications</span>
-            </div>
-            <div class="dash-card-body">
-              <div style="display:flex;flex-direction:column;gap:10px;">
-                <div style="display:flex;gap:12px;align-items:flex-start;padding:12px;background:var(--c-slate-50);border-radius:10px;border-left:3px solid var(--c-amber);">
-                  <i class="bi bi-virus" style="color:var(--c-amber);font-size:1.1rem;margin-top:2px;"></i>
-                  <div>
-                    <p style="margin:0;font-size:0.85rem;font-weight:600;">Disease Outbreak Alert</p>
-                    <p style="margin:0;font-size:0.8rem;color:var(--c-slate-400);">Avian Flu in nearby areas</p>
-                  </div>
-                </div>
-                <div style="display:flex;gap:12px;align-items:flex-start;padding:12px;background:var(--c-slate-50);border-radius:10px;border-left:3px solid var(--c-blue);">
-                  <i class="bi bi-syringe" style="color:var(--c-blue);font-size:1.1rem;margin-top:2px;"></i>
-                  <div>
-                    <p style="margin:0;font-size:0.85rem;font-weight:600;">Vaccination Reminder</p>
-                    <p style="margin:0;font-size:0.8rem;color:var(--c-slate-400);">Cattle vaccination due next week</p>
-                  </div>
-                </div>
-                <div style="display:flex;gap:12px;align-items:flex-start;padding:12px;background:var(--c-slate-50);border-radius:10px;border-left:3px solid var(--c-emerald);">
-                  <i class="bi bi-calendar-check" style="color:var(--c-emerald);font-size:1.1rem;margin-top:2px;"></i>
-                  <div>
-                    <p style="margin:0;font-size:0.85rem;font-weight:600;">Inspection Scheduled</p>
-                    <p style="margin:0;font-size:0.8rem;color:var(--c-slate-400);">Farm inspection on Mar 25, 2026</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+    <div class="main-wrapper">
+        <header class="top-bar">
+            <button class="menu-toggle" onclick="toggleMenu()">
+                <i class="bi bi-list"></i>
+            </button>
+            <div style="font-weight: 700;" id="current-title">Dashboard</div>
+            <div style="width: 30px;"></div> </header>
 
-        <div class="dash-card">
-          <div class="dash-card-header">
-            <span class="dash-card-title">Report Status Updates</span>
-          </div>
-          <div class="dash-card-body">
-            <div style="display:flex;flex-direction:column;gap:10px;">
-              <div style="display:flex;gap:14px;align-items:flex-start;padding:14px;border:1.5px solid var(--c-slate-200);border-radius:10px;">
-                <i class="bi bi-exclamation-triangle-fill" style="color:var(--c-red);font-size:1.3rem;margin-top:2px;"></i>
-                <div>
-                  <p style="margin:0;font-weight:600;font-size:0.9rem;">Disease Symptoms: Chicken showing flu-like symptoms</p>
-                  <p style="margin:4px 0 0;font-size:0.8rem;">
-                    <span class="badge badge-amber">Pending</span>
-                  </p>
-                </div>
-              </div>
-              <div style="display:flex;gap:14px;align-items:flex-start;padding:14px;border:1.5px solid var(--c-slate-200);border-radius:10px;">
-                <i class="bi bi-exclamation-triangle-fill" style="color:var(--c-emerald);font-size:1.3rem;margin-top:2px;"></i>
-                <div>
-                  <p style="margin:0;font-weight:600;font-size:0.9rem;">Livestock Death: 1 pig died unexpectedly</p>
-                  <p style="margin:4px 0 0;font-size:0.8rem;">
-                    <span class="badge badge-green">Resolved</span>
-                  </p>
-                </div>
-              </div>
+        <main class="content">
+            <div class="card">
+                <h2 style="font-size: 1.2rem; margin-bottom: 10px;">Welcome back, <?= $firstName ?>!</h2>
+                <p style="color: var(--grey); font-size: 0.9rem;">Tap the menu icon in the top left to navigate through your farm tools.</p>
             </div>
-          </div>
-        </div>
-      </div>
 
-      <!-- Other Farmer Sections (Farm Registration, Livestock, etc.) -->
-      <!-- Add other sections similar to admin panel structure -->
-
+            <div id="dynamic-content">
+                <div class="card" style="border-left: 5px solid var(--primary);">
+                    <div style="font-size: 0.8rem; color: var(--grey);">Total Livestock</div>
+                    <div style="font-size: 1.8rem; font-weight: 800;"><?= $totalLivestock ?></div>
+                </div>
+            </div>
+        </main>
     </div>
-  </main>
 
-  <!-- Toast Notification -->
-    <div id="toast" style="position:fixed;bottom:28px;right:28px;z-index:9999;display:none;">
-    <div style="background:var(--c-forest);color:#fff;padding:14px 22px;border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.25);display:flex;align-items:center;gap:10px;font-size:0.9rem;font-weight:500;max-width:340px;animation:fadeIn 0.3s ease;">
-      <i class="bi bi-check-circle-fill" style="color:var(--c-emerald);font-size:1.1rem;"></i>
-      <span id="toast-msg">Action completed</span>
-    </div>
-  </div>
+    <script>
+        function toggleMenu() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('overlay');
+            
+            sidebar.classList.toggle('active');
+            overlay.classList.toggle('show');
+        }
 
-  <script src="db.js"></script>
-  <script>
-    // Farmer Panel JavaScript
-    document.addEventListener('DOMContentLoaded', function() {
-      DB.seed();
-      initFarmerPanel();
-    });
+        function navigate(pageTitle) {
+            // Update Title
+            document.getElementById('current-title').innerText = pageTitle;
+            
+            // Highlight active nav
+            const items = document.querySelectorAll('.nav-item');
+            items.forEach(item => {
+                item.classList.remove('active');
+                if(item.innerText.includes(pageTitle)) {
+                    item.classList.add('active');
+                }
+            });
 
-    function initFarmerPanel() {
-      refreshFarmerStats();
-      updateSidebarUser('farmer');
-      initFarmerCharts();
-    }
+            // Close menu on mobile after selection
+            toggleMenu();
 
-    function showToast(msg, isError = false) {
-      const toast = document.getElementById('toast');
-      const msgEl = document.getElementById('toast-msg');
-      const icon = toast.querySelector('i');
-      
-      if (msgEl) msgEl.textContent = msg;
-      if (icon) icon.style.color = isError ? '#ef4444' : '#10b981';
-      
-      toast.style.display = 'block';
-      setTimeout(() => {
-        toast.style.display = 'none';
-      }, 3500);
-    }
-
-    function updateSidebarUser(panelId) {
-      const nameEl = document.querySelector('#farmer-sidebar .panel-user-name');
-      const roleEl = document.querySelector('#farmer-sidebar .panel-user-role');
-      const avatarEl = document.querySelector('#farmer-sidebar .panel-avatar');
-      const topAvatarEl = document.querySelector('.topbar-right .panel-avatar');
-      
-      if (nameEl) nameEl.textContent = 'Juan dela Cruz';
-      if (roleEl) roleEl.textContent = 'Farmer';
-      if (avatarEl) avatarEl.textContent = 'JD';
-      if (topAvatarEl) topAvatarEl.textContent = 'JD';
-    }
-
-    function openPanelSidebar(panel) {
-      document.getElementById(panel+'-sidebar')?.classList.add('open');
-      document.getElementById(panel+'-overlay')?.classList.add('open');
-    }
-
-    function closePanelSidebar(panel) {
-      document.getElementById(panel+'-sidebar')?.classList.remove('open');
-      document.getElementById(panel+'-overlay')?.classList.remove('open');
-    }
-
-    function showPanel(panelId, sectionId) {
-      document.querySelectorAll('.panel-section').forEach(s => s.classList.remove('active'));
-      const target = document.getElementById(`farmer-${sectionId}`);
-      if (target) target.classList.add('active');
-
-      document.querySelectorAll('#farmer-sidebar .panel-nav-item').forEach(item => item.classList.remove('active'));
-      event.currentTarget.classList.add('active');
-
-      const titleEl = document.getElementById('farmer-section-title');
-      const titles = {
-        dashboard: 'Dashboard',
-        farm: 'Farm Registration',
-        livestock: 'Livestock Monitoring',
-        incidents: 'Incident Reporting',
-        notifications: 'Notifications',
-        map: 'Farm Map',
-        profile: 'Profile'
-      };
-      if (titleEl) titleEl.textContent = titles[sectionId] || sectionId;
-
-      closePanelSidebar(panelId);
-    }
-
-    function refreshFarmerStats() {
-      const livestock = DB.getAll('livestock');
-      const incidents = DB.getAll('incidents');
-      const farms = DB.getAll('farms');
-      
-      const totalLivestock = livestock.reduce((sum, l) => sum + (parseInt(l.qty) || 0), 0);
-      const activeIncidents = incidents.filter(i => i.status !== 'Resolved').length;
-      
-      document.getElementById('farmer-total-livestock').textContent = totalLivestock;
-      document.getElementById('farmer-active-incidents').textContent = activeIncidents;
-      document.getElementById('farmer-pending-inspections').textContent = farms.filter(f => f.status === 'Pending').length;
-    }
-
-    function initFarmerCharts() {
-      // Livestock by type chart
-      const ctx = document.getElementById('farmer-livestock-chart')?.getContext('2d');
-      if (ctx) {
-        new Chart(ctx, {
-          type: 'doughnut',
-          data: {
-            labels: ['Cattle', 'Swine', 'Poultry', 'Goat'],
-            datasets: [{
-              data: [8, 6, 120, 4],
-              backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#8b5cf6']
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: {
-                position: 'bottom',
-                labels: { font: { size: 11 } }
-              }
-            }
-          }
-        });
-      }
-    }
-
-    // Form handlers
-    document.querySelectorAll('form').forEach(form => {
-      form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        showToast('Form submitted successfully!');
-        this.reset();
-      });
-    });
-  </script>
+            // Example dynamic content change
+            document.getElementById('dynamic-content').innerHTML = `
+                <div class="card">
+                    <h3>${pageTitle} Section</h3>
+                    <p style="color: #64748b; margin-top: 10px;">This is the placeholder for the ${pageTitle} module.</p>
+                </div>
+            `;
+        }
+    </script>
 </body>
 </html>
