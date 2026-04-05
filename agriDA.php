@@ -84,6 +84,107 @@ $user_profile['mobile'] = $user_profile['mobile'] ?? ''; // Default empty if not
 $user_name = $user_profile ? ($user_profile['firstName'] . ' ' . substr($user_profile['lastName'], 0, 1)) : 'G';
 $user_initial = strtoupper(substr($user_name, 0, 1));
 $user_fullname = $user_profile['firstName'] ?? 'Guest User';
+
+$analytics = [
+    'farm_stats' => [],
+    'livestock_stats' => [],
+    'regional_stats' => [],
+    'incident_stats' => [],
+    'totals' => [
+        'total_farms' => 0,
+        'total_livestock' => 0,
+        'total_incidents' => 0,
+        'active_incidents' => 0
+    ]
+];
+
+try {
+    // 1. Overall Totals
+    $analytics['totals']['total_farms'] = $pdo->query("SELECT COUNT(*) FROM farms")->fetchColumn();
+    $analytics['totals']['total_livestock'] = $pdo->query("SELECT COALESCE(SUM(qty), 0) FROM livestock")->fetchColumn();
+    $analytics['totals']['total_incidents'] = $pdo->query("SELECT COUNT(*) FROM incidents")->fetchColumn();
+    $analytics['totals']['active_incidents'] = $pdo->query("SELECT COUNT(*) FROM incidents WHERE status IN ('Pending', 'In Progress')")->fetchColumn();
+
+    // 2. Livestock Distribution by Type
+    $analytics['livestock_stats'] = $pdo->query("
+        SELECT type, SUM(qty) as total_qty, AVG(weight) as avg_weight 
+        FROM livestock 
+        GROUP BY type
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    // 3. Regional Stats (Joining farms with officer_profiles for region data)
+    // Note: We use the assigned_region from officer_profiles linked via ownerId or a default
+    $analytics['regional_stats'] = $pdo->query("
+        SELECT 
+            COALESCE(op.assigned_region, 'General') as region,
+            COUNT(DISTINCT f.id) as farm_count,
+            COALESCE(SUM(l.qty), 0) as livestock_count
+        FROM farms f
+        LEFT JOIN officer_profiles op ON f.ownerId = op.user_id
+        LEFT JOIN livestock l ON f.id = l.farmId
+        GROUP BY region
+        ORDER BY livestock_count DESC
+        LIMIT 5
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+} catch (PDOException $e) {
+    // Silent fail or log error
+    error_log($e->getMessage());
+}
+
+// Helper for Swine count to prevent "null" errors in the card
+$swine_count = 0;
+foreach ($analytics['livestock_stats'] as $s) {
+    if ($s['type'] === 'Swine') {
+        $swine_count = $s['total_qty'];
+        break;
+    }
+}
+
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $conn->begin_transaction();
+
+    try {
+        // 1. Update Core User Info
+        $stmt1 = $conn->prepare("UPDATE users SET firstName = ?, lastName = ?, mobile = ? WHERE id = ?");
+        $stmt1->bind_param("sssi", $_POST['firstName'], $_POST['lastName'], $_POST['mobile'], $current_user_id);
+        $stmt1->execute();
+
+        // 2. Update/Insert Officer Profile Info
+        $stmt2 = $conn->prepare("INSERT INTO officer_profiles 
+            (user_id, gov_id, department, position, office, assigned_region, municipality, province) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+            gov_id = VALUES(gov_id), 
+            department = VALUES(department), 
+            position = VALUES(position), 
+            office = VALUES(office), 
+            assigned_region = VALUES(assigned_region), 
+            municipality = VALUES(municipality), 
+            province = VALUES(province)");
+        
+        $stmt2->bind_param("isssssss", 
+            $current_user_id, $_POST['gov_id'], $_POST['department'], 
+            $_POST['position'], $_POST['office'], $_POST['assigned_region'], 
+            $_POST['municipality'], $_POST['province']
+        );
+        $stmt2->execute();
+
+        // 3. Optional Password Change
+        if (!empty($_POST['new_password'])) {
+            $hashed_pass = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
+            $stmt3 = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
+            $stmt3->bind_param("si", $hashed_pass, $current_user_id);
+            $stmt3->execute();
+        }
+
+        $conn->commit();
+        echo "Profile updated successfully!";
+    } catch (Exception $e) {
+        $conn->rollback();
+        echo "Error updating profile: " . $e->getMessage();
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -149,7 +250,10 @@ $user_fullname = $user_profile['firstName'] ?? 'Guest User';
     .user-role { font-size: 0.75rem; color: var(--c-text-sub); font-weight: 500; }
 
     .topbar { position: fixed; top: 0; right: 0; left: 0; height: var(--topbar-height); background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 900; border-bottom: 1px solid var(--c-slate-100); }
-    .main-content { padding: 24px; margin-top: var(--topbar-height); transition: 0.3s; }
+    .main-content { padding: 24px; margin-top: var(--topbar-height); transition: 0.3s; } padding: 24px !important;
+  margin-top: var(--topbar-height) !important;
+  transition: 0.3s !important;
+  padding-top: 90px !important;
     .menu-btn { background: none; border: none; font-size: 1.6rem; color: var(--c-brand-dark); cursor: pointer; }
     .sidebar-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.4); backdrop-filter: blur(2px); z-index: 999; display: none; }
     .sidebar-overlay.open { display: block; }
@@ -229,6 +333,53 @@ $user_fullname = $user_profile['firstName'] ?? 'Guest User';
     .legend-color.low { background: #10b981; }
     .legend-color.medium { background: #f59e0b; }
     .legend-color.high { background: #ef4444; }
+
+    /* Responsive Grid for Stat Cards */
+  .stats-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    margin-bottom: 32px;
+  }
+
+  /* Responsive Controls Card (Downloads & Quick Analytics) */
+  .geo-controls-card {
+    display: grid;
+    grid-template-columns: 1fr; /* Stacked by default on mobile */
+    gap: 24px;
+    margin-bottom: 28px;
+    background: #fff;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  }
+
+  /* Desktop layout for controls */
+  @media (min-width: 768px) {
+    .geo-controls-card {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  /* Button Groups */
+  .btn-group-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr); /* 2 columns on mobile */
+    gap: 8px;
+  }
+
+  @media (min-width: 480px) {
+    .btn-group-grid {
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    }
+  }
+
+  /* Typography Adjustments */
+  @media (max-width: 600px) {
+    .section-title { font-size: 1.5rem; }
+    .stat-val { font-size: 2rem !important; }
+    .table-container { margin: 0 -15px; border-radius: 0; } /* Edge-to-edge on mobile */
+  }
     
     @media (min-width: 1024px) {
         .panel-sidebar { left: 0; }
@@ -236,6 +387,160 @@ $user_fullname = $user_profile['firstName'] ?? 'Guest User';
         .menu-btn { display: none; }
         .sidebar-overlay { display: none !important; }
     }
+
+    .stats-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 32px; }
+  .geo-controls-card { display: grid; grid-template-columns: 1fr; gap: 24px; margin-bottom: 28px; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  @media (min-width: 768px) { .geo-controls-card { grid-template-columns: 1fr 1fr; } }
+  .btn-group-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  @media (min-width: 480px) { .btn-group-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); } }
+  :root {
+    --c-brand: #2ecc71;
+    --c-brand-dark: #27ae60;
+    --c-text-main: #2d3436;
+    --c-bg-light: #f9f9f9;
+    --shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.profile-container {
+    padding: 15px;
+    background-color: var(--c-bg-light);
+    min-height: 100vh;
+}
+
+.profile-card {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    max-width: 800px;
+    margin: 0 auto;
+    overflow: hidden;
+}
+
+.profile-header {
+    background: linear-gradient(135deg, var(--c-brand), var(--c-brand-dark));
+    color: white;
+    padding: 30px 20px;
+    text-align: center;
+}
+
+.avatar-circle {
+    width: 80px;
+    height: 80px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    font-weight: bold;
+    margin: 0 auto 10px;
+    border: 3px solid #fff;
+}
+
+.form-section {
+    padding: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+.section-title {
+    font-size: 1.1rem;
+    color: var(--c-brand-dark);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr; /* Default mobile: 1 column */
+    gap: 15px;
+}
+
+@media (min-width: 600px) {
+    .form-grid {
+        grid-template-columns: 1fr 1fr; /* Desktop/Tablet: 2 columns */
+    }
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #636e72;
+}
+
+.form-group input {
+    padding: 12px;
+    border: 1.5px solid #dfe6e9;
+    border-radius: 8px;
+    font-size: 1rem;
+    transition: border-color 0.3s;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: var(--c-brand);
+}
+
+.input-disabled {
+    background-color: #f1f2f6;
+    cursor: not-allowed;
+}
+
+.form-actions {
+    padding: 25px 20px;
+    display: flex;
+    gap: 10px;
+}
+
+.btn-primary, .btn-secondary {
+    flex: 1;
+    padding: 14px;
+    border-radius: 8px;
+    font-weight: bold;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-primary { background: var(--c-brand); color: white; }
+.btn-secondary { background: #dfe6e9; color: var(--c-text-main); }
+
+.btn-primary:active { transform: scale(0.98); }
+
+.geo-controls-card {
+  background: #fff !important;
+  border-radius: 20px !important;
+  padding: 28px !important;
+  border: 1px solid var(--c-slate-100) !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.06) !important;
+  margin-bottom: 28px !important;
+  display: grid !important;
+  grid-template-columns: 1fr 1fr 280px !important;  /* FIXED WIDTH */
+  gap: 32px !important;
+  align-items: center !important;
+  min-height: 120px !important;
+}
+
+@media (max-width: 992px) {
+  .geo-controls-card {
+    grid-template-columns: 1fr !important;
+    gap: 24px !important;
+    padding: 20px !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .geo-controls-card {
+    padding: 16px !important;
+    gap: 20px !important;
+  }
+}
   </style>
 </head>
 <body>
@@ -477,59 +782,58 @@ $user_fullname = $user_profile['firstName'] ?? 'Guest User';
     </div>
 
     <div class="geo-controls-card">
-      <div class="info-group">
-        <div class="icon-box">
-          <i class="bi bi-geo-fill"></i>
-        </div>
-        <div>
-          <div class="farm-label">Live Farms</div>
-          <div style="display: flex; align-items: center; gap: 8px; margin-top: 2px;">
-            <span class="count-badge"><?php echo count($all_farms); ?></span>
-            <small style="color: var(--c-text-sub); font-weight: 500;">Active Sites</small>
-          </div>
-        </div>
-      </div>
-
-      <div class="info-group">
-        <div class="icon-box" style="background: linear-gradient(135deg, var(--c-success), #059669);">
-          <i class="bi bi-activity"></i>
-        </div>
-        <div>
-          <div class="farm-label">Livestock Heads</div>
-          <div style="display: flex; align-items: center; gap: 8px; margin-top: 2px;">
-            <span class="count-badge" style="background: var(--c-success);"><?php echo number_format($stats['total_livestock']); ?></span>
-            <small style="color: var(--c-text-sub); font-weight: 500;">Total Population</small>
-          </div>
-        </div>
-      </div>
-
-      <div class="action-group">
-        <div class="toggle-pill">
-          <button onclick="toggleLayer('livestock', event)" id="livestockToggle" class="toggle-btn">
-            <i class="bi bi-piggy-bank"></i> Livestock
-          </button>
-          <button onclick="toggleLayer('incidents', event)" id="incidentsToggle" class="toggle-btn">
-            <i class="bi bi-exclamation-triangle"></i> Incidents
-          </button>
-          <button onclick="toggleLayer('farms', event)" id="farmsToggle" class="toggle-btn active">
-            <i class="bi bi-house-door"></i> Farms
-          </button>
-        </div>
-        
-        <div style="display: flex; gap: 12px; margin-top: 12px;">
-          <!-- ✅ FIXED: Opens REAL farm-map.php with LIVE data -->
-          <button onclick="loadFarmMap()" class="btn-main" style="padding: 10px 16px; font-size: 0.9rem;" title="Open Fullscreen Interactive Farm Map">
-            <i class="bi bi-box-arrow-up-right"></i> Fullscreen Map
-          </button>
-          <button onclick="fitBounds()" class="btn-secondary" style="padding: 10px 16px; font-size: 0.9rem;">
-            <i class="bi bi-geo-alt"></i> Fit Philippines
-          </button>
-          <button onclick="refreshMapData()" class="btn-secondary" style="padding: 10px 16px; font-size: 0.9rem;">
-            <i class="bi bi-arrow-clockwise"></i> Refresh
-          </button>
-        </div>
+  <div class="info-group">
+    <div class="icon-box">
+      <i class="bi bi-geo-fill"></i>
+    </div>
+    <div>
+      <div class="farm-label">Live Farms</div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 2px;">
+        <span class="count-badge"><?php echo count($all_farms); ?></span>
+        <small style="color: var(--c-text-sub); font-weight: 500;">Active Sites</small>
       </div>
     </div>
+  </div>
+
+  <div class="info-group">
+    <div class="icon-box" style="background: linear-gradient(135deg, var(--c-success), #059669);">
+      <i class="bi bi-activity"></i>
+    </div>
+    <div>
+      <div class="farm-label">Livestock Heads</div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 2px;">
+        <span class="count-badge" style="background: var(--c-success);"><?php echo number_format($stats['total_livestock']); ?></span>
+        <small style="color: var(--c-text-sub); font-weight: 500;">Total Population</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="action-group">
+    <div class="toggle-pill">
+      <button onclick="toggleLayer('livestock', event)" id="livestockToggle" class="toggle-btn">
+        <i class="bi bi-piggy-bank"></i> Livestock
+      </button>
+      <button onclick="toggleLayer('incidents', event)" id="incidentsToggle" class="toggle-btn">
+        <i class="bi bi-exclamation-triangle"></i> Incidents
+      </button>
+      <button onclick="toggleLayer('farms', event)" id="farmsToggle" class="toggle-btn active">
+        <i class="bi bi-house-door"></i> Farms
+      </button>
+    </div>
+    
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+      <button onclick="loadFarmMap()" class="btn-main" style="padding: 10px 16px; font-size: 0.85rem; min-width: 140px;">
+        <i class="bi bi-box-arrow-up-right"></i> Fullscreen Map
+      </button>
+      <button onclick="fitBounds()" class="btn-secondary" style="padding: 10px 12px; font-size: 0.85rem;">
+        <i class="bi bi-geo-alt"></i> Fit PH
+      </button>
+      <button onclick="refreshMapData()" class="btn-secondary" style="padding: 10px 12px; font-size: 0.85rem;">
+        <i class="bi bi-arrow-clockwise"></i> Refresh
+      </button>
+    </div>
+  </div>
+</div>
 
     <div class="map-section">
       <div class="map-container">
@@ -562,93 +866,201 @@ $user_fullname = $user_profile['firstName'] ?? 'Guest User';
   </div>
 </section>
 
-    <!-- REPORTS & ANALYTICS -->
-    <section id="sec-reports" class="section">
-      <div class="stats-grid">
-        <div class="card">
-          <span class="stat-val">Generate Reports</span>
-          <div style="margin-top:16px;">
-            <a href="#" class="btn btn-primary" style="margin-right:8px;">Farm Report PDF</a>
-            <a href="#" class="btn btn-primary">Incident Excel</a>
-          </div>
+    <!-- REPORTS & ANALYTICS - ENHANCED WITH REAL DATA -->
+<section id="sec-reports" class="section">
+  <div class="geo-panel-container">
+    <div class="section-header">
+      <h1 class="section-title">Reports & Analytics</h1>
+      <p class="section-desc">Regional livestock and farm performance insights</p>
+    </div>
+
+    <div class="stats-grid">
+      <div class="card" style="border-left: 4px solid #3498db;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <span class="stat-label" style="font-size: 0.85rem; font-weight: bold;">TOTAL LIVESTOCK</span>
+          <i class="bi bi-bar-chart" style="font-size: 1.5rem; color: #3498db;"></i>
         </div>
-        <div class="card">
-          <span class="stat-val">Analytics</span>
-          <div style="margin-top:16px;">
-            <a href="#" class="btn btn-secondary">Farm Trends</a><br>
-            <a href="#" class="btn btn-secondary" style="margin-top:8px;">Incident Patterns</a>
-          </div>
+        <div style="font-size: 2.5rem; font-weight: 800; color: #2c3e50; line-height: 1;">
+          <?php echo number_format($analytics['totals']['total_livestock']); ?>
+        </div>
+        <span class="stat-label"><?php echo number_format($analytics['totals']['total_farms']); ?> Active Farms</span>
+      </div>
+
+      <?php $top_region = $analytics['regional_stats'][0] ?? ['livestock_count' => 0, 'region' => 'N/A']; ?>
+      <div class="card" style="border-left: 4px solid #2ecc71;">
+        <div style="font-size: 2.5rem; font-weight: 800; color: #2c3e50;">
+            <?php echo number_format($top_region['livestock_count']); ?>
+        </div>
+        <span class="stat-label"><?php echo htmlspecialchars($top_region['region']); ?> Region</span>
+      </div>
+
+      <div class="card" style="border-left: 4px solid #f1c40f;">
+        <div style="font-size: 2.5rem; font-weight: 800; color: #2c3e50;">
+            <?php echo $analytics['totals']['active_incidents']; ?>
+        </div>
+        <span class="stat-label">Active Incidents</span>
+      </div>
+
+      <div class="card" style="border-left: 4px solid #e74c3c;">
+        <div style="font-size: 2.5rem; font-weight: 800; color: #2c3e50;">
+            <?php echo number_format($swine_count); ?>
+        </div>
+        <span class="stat-label">Total Swine</span>
+      </div>
+    </div>
+
+    <div class="geo-controls-card">
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div class="farm-label" style="font-size: 1.1rem; font-weight: 600;">📊 Generate Reports</div>
+        <div class="btn-group-grid">
+          <button onclick="downloadReport('pdf')" class="btn-main">Full PDF</button>
+          <button onclick="downloadReport('excel')" class="btn-secondary">Excel</button>
+          <button onclick="downloadReport('csv')" class="btn-secondary">CSV</button>
+          <button onclick="downloadReport('json')" class="btn-secondary">JSON</button>
         </div>
       </div>
-    </section>
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div class="farm-label" style="font-size: 1.1rem; font-weight: 600;">📈 Quick Analytics</div>
+        <div class="btn-group-grid">
+          <button class="btn-secondary">Farms</button>
+          <button class="btn-secondary">Livestock</button>
+          <button class="btn-secondary">Incidents</button>
+          <button class="btn-main">Charts</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-container" style="background: white; border-radius: 8px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+      <div class="table-header" style="margin-bottom: 15px;">
+        <h2 style="font-size: 1.2rem; color: #2c3e50;">Regional Livestock Distribution</h2>
+      </div>
+      <div style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; min-width: 450px;">
+          <thead>
+            <tr style="text-align: left; border-bottom: 2px solid #eee;">
+              <th style="padding: 12px;">Region</th>
+              <th style="padding: 12px;">Farms</th>
+              <th style="padding: 12px;">Livestock</th>
+              <th style="padding: 12px;">% Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php if (!empty($analytics['regional_stats'])): ?>
+                <?php foreach ($analytics['regional_stats'] as $region): ?>
+                <tr style="border-bottom: 1px solid #eee;">
+                  <td style="padding: 12px; font-weight: 600;"><?php echo htmlspecialchars($region['region']); ?></td>
+                  <td style="padding: 12px;"><?php echo $region['farm_count']; ?></td>
+                  <td style="padding: 12px; font-weight: 700; color: #3498db;"><?php echo number_format($region['livestock_count']); ?></td>
+                  <td style="padding: 12px;">
+                    <?php 
+                    $pct = ($analytics['totals']['total_livestock'] > 0) ? ($region['livestock_count'] / $analytics['totals']['total_livestock']) * 100 : 0;
+                    echo round($pct, 1) . '%';
+                    ?>
+                  </td>
+                </tr>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <tr><td colspan="4" style="text-align: center; padding: 20px;">No data available</td></tr>
+            <?php endif; ?>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
 
     <!-- PROFILE -->
     <section id="sec-profile" class="section">
-      <div class="profile-form">
-        <h2 style="margin-bottom:32px; color:var(--c-brand-dark);">👤 My Profile</h2>
-        
-        <form id="profileForm" onsubmit="updateProfile(event)">
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Full Name</label>
-              <input type="text" class="form-input" value="<?php echo htmlspecialchars(($user_profile['firstName'] ?? '') . ' ' . ($user_profile['lastName'] ?? '')); ?>" readonly>
+    <div class="profile-form">
+        <div class="profile-header">
+            <div class="avatar-circle">
+                <?php echo strtoupper(substr($user_profile['firstName'] ?? 'U', 0, 1)); ?>
             </div>
-            <div class="form-group">
-              <label class="form-label">Email</label>
-              <input type="email" class="form-input" value="<?php echo htmlspecialchars($user_profile['email'] ?? ''); ?>" readonly>
+            <h2>Edit Official Profile</h2>
+            <p class="subtitle">Update your personal and professional information</p>
+        </div>
+
+        <form id="profileForm" method="POST" class="profile-form">
+            
+            <div class="form-section">
+                <h3 class="section-title"><i class="icon">👤</i> Personal Information</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>First Name</label>
+                        <input type="text" name="firstName" value="<?php echo htmlspecialchars($user_profile['firstName'] ?? ''); ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Last Name</label>
+                        <input type="text" name="lastName" value="<?php echo htmlspecialchars($user_profile['lastName'] ?? ''); ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Email Address</label>
+                        <input type="email" value="<?php echo htmlspecialchars($user_profile['email'] ?? ''); ?>" disabled class="input-disabled">
+                        <small>Email cannot be changed.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Mobile Number</label>
+                        <input type="tel" name="mobile" value="<?php echo htmlspecialchars($user_profile['mobile'] ?? ''); ?>" placeholder="09XXXXXXXXX">
+                    </div>
+                </div>
             </div>
-          </div>
-          
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Mobile</label>
-              <input type="tel" class="form-input" id="mobile" name="mobile" value="<?php echo htmlspecialchars($user_profile['mobile'] ?? ''); ?>">
+
+            <div class="form-section">
+                <h3 class="section-title"><i class="icon">💼</i> Work Information</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Gov't / Employee ID</label>
+                        <input type="text" name="gov_id" value="<?php echo htmlspecialchars($user_profile['gov_id'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label>Department</label>
+                        <input type="text" name="department" value="<?php echo htmlspecialchars($user_profile['department'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label>Position / Title</label>
+                        <input type="text" name="position" value="<?php echo htmlspecialchars($user_profile['position'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label>Office Location</label>
+                        <input type="text" name="office" value="<?php echo htmlspecialchars($user_profile['office'] ?? ''); ?>">
+                    </div>
+                </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Gov't/Employee ID</label>
-              <input type="text" class="form-input" id="gov_id" name="gov_id" value="<?php echo htmlspecialchars($user_profile['gov_id'] ?? ''); ?>">
+
+            <div class="form-section">
+                <h3 class="section-title"><i class="icon">📍</i> Assigned Region</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Region</label>
+                        <input type="text" name="assigned_region" value="<?php echo htmlspecialchars($user_profile['assigned_region'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label>Province</label>
+                        <input type="text" name="province" value="<?php echo htmlspecialchars($user_profile['province'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label>Municipality</label>
+                        <input type="text" name="municipality" value="<?php echo htmlspecialchars($user_profile['municipality'] ?? ''); ?>">
+                    </div>
+                </div>
             </div>
-          </div>
-          
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Department</label>
-              <input type="text" class="form-input" id="department" name="department" value="<?php echo htmlspecialchars($user_profile['department'] ?? ''); ?>">
+
+            <div class="form-section">
+                <h3 class="section-title"><i class="icon">🔒</i> Security</h3>
+                <div class="form-group">
+                    <label>New Password (Leave blank to keep current)</label>
+                    <input type="password" name="new_password" placeholder="••••••••">
+                </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Position</label>
-              <input type="text" class="form-input" id="position" name="position" value="<?php echo htmlspecialchars($user_profile['position'] ?? ''); ?>">
+
+            <div class="form-actions">
+                <button type="button" class="btn-secondary" onclick="window.history.back()">Cancel</button>
+                <button type="submit" class="btn-primary">Save Changes</button>
             </div>
-          </div>
-          
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Assigned Region</label>
-              <input type="text" class="form-input" id="assigned_region" name="assigned_region" value="<?php echo htmlspecialchars($user_profile['assigned_region'] ?? ''); ?>">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Office</label>
-              <input type="text" class="form-input" id="office" name="office" value="<?php echo htmlspecialchars($user_profile['office'] ?? ''); ?>">
-            </div>
-          </div>
-          
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Municipality</label>
-              <input type="text" class="form-input" id="municipality" name="municipality" value="<?php echo htmlspecialchars($user_profile['municipality'] ?? ''); ?>">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Province</label>
-              <input type="text" class="form-input" id="province" name="province" value="<?php echo htmlspecialchars($user_profile['province'] ?? ''); ?>">
-            </div>
-          </div>
-          
-          <div style="text-align:right;">
-            <button type="submit" class="btn btn-primary" style="padding:12px 32px; font-size:1rem;">Update Profile</button>
-          </div>
         </form>
-      </div>
-    </section>
+        </div>
+</div>
+</section>
 
   </main>
 
@@ -871,6 +1283,61 @@ function showToast(message, type = 'info') {
       incidentsLayer.addTo(map);
     }
 
+    // Reports & Analytics Functions
+function downloadReport(format, type = 'complete') {
+  const types = {
+    complete: 'Complete System Report',
+    farms: 'Farm Analytics',
+    livestock: 'Livestock Inventory', 
+    incidents: 'Incident Reports'
+  };
+  
+  showLoading(true);
+  
+  // Real AJAX call to generate and download report
+  fetch('api/generate_report.php', {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest'
+    },
+    body: JSON.stringify({
+      format: format,
+      report_type: type,
+      user_id: <?php echo $user_id; ?>
+    })
+  })
+  .then(response => response.blob())
+  .then(blob => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `AgriTrace_${types[type] || 'Report'}_${new Date().toISOString().slice(0,10)}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    showToast(`📥 ${types[type]} downloaded as ${format.toUpperCase()}!`, 'success');
+  })
+  .catch(error => {
+    console.error('Download failed:', error);
+    showToast('❌ Download failed. Please try again.', 'error');
+  })
+  .finally(() => showLoading(false));
+}
+
+function showAnalyticsChart() {
+  showToast('📊 Chart view coming soon! Use Excel/CSV for detailed analysis.', 'info');
+  // Future: Integrate Chart.js for live charts
+}
+
+function showLoading(show = true) {
+  const overlay = document.getElementById('loadingOverlay');
+  if (overlay) {
+    overlay.style.display = show ? 'flex' : 'none';
+  }
+}
+
     // Profile update - FIXED
     function updateProfile(event) {
       event.preventDefault();
@@ -920,6 +1387,28 @@ function showToast(message, type = 'info') {
         loadingOverlay.style.display = 'none';
       }
     });
+
+    // Profile form handler
+document.getElementById('profileForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    formData.append('user_id', <?php echo $user_id; ?>);
+    
+    fetch('update_profile.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.text())
+    .then(data => {
+        showToast('✅ Profile updated successfully!', 'success');
+        setTimeout(() => location.reload(), 1500);
+    })
+    .catch(error => {
+        showToast('❌ Update failed!', 'error');
+        console.error('Profile update error:', error);
+    });
+});
   </script>
 
 </body>
