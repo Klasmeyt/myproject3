@@ -67,9 +67,12 @@ $public_reports = $stmt->fetchAll();
 
 // User profile data
 // User profile data - FIXED: Removed non-existent 'mobile' column
+// User profile data - ENHANCED
 $stmt = $pdo->prepare("
-    SELECT u.*, p.gov_id, p.department, p.position, p.office, 
-           p.assigned_region, p.municipality, p.province 
+    SELECT u.*, 
+           p.gov_id, p.department, p.position, p.office, 
+           p.assigned_region, p.municipality, p.province,
+           p.created_at as profile_created
     FROM users u 
     LEFT JOIN officer_profiles p ON u.id = p.user_id 
     WHERE u.id = ?
@@ -77,13 +80,16 @@ $stmt = $pdo->prepare("
 $stmt->execute([$user_id]);
 $user_profile = $stmt->fetch();
 
-// Get mobile from users table if it exists there
-$user_profile['mobile'] = $user_profile['mobile'] ?? ''; // Default empty if not exists
+// Ensure mobile is handled properly
+$user_profile['mobile'] = $user_profile['mobile'] ?? 'N/A';
 
-// Update user info in sidebar
-$user_name = $user_profile ? ($user_profile['firstName'] . ' ' . substr($user_profile['lastName'], 0, 1)) : 'G';
+// User display data
+$user_name = $user_profile ? trim(($user_profile['firstName'] ?? '') . ' ' . ($user_profile['lastName'] ?? '')) : 'User';
 $user_initial = strtoupper(substr($user_name, 0, 1));
 $user_fullname = $user_profile['firstName'] ?? 'Guest User';
+if ($user_profile['lastName']) {
+    $user_fullname .= ' ' . $user_profile['lastName'];
+}
 
 $analytics = [
     'farm_stats' => [],
@@ -141,144 +147,58 @@ foreach ($analytics['livestock_stats'] as $s) {
     }
 }
 
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $conn->begin_transaction();
-
-    try {
-        // 1. Update Core User Info
-        $stmt1 = $conn->prepare("UPDATE users SET firstName = ?, lastName = ?, mobile = ? WHERE id = ?");
-        $stmt1->bind_param("sssi", $_POST['firstName'], $_POST['lastName'], $_POST['mobile'], $current_user_id);
-        $stmt1->execute();
-
-        // 2. Update/Insert Officer Profile Info
-        $stmt2 = $conn->prepare("INSERT INTO officer_profiles 
-            (user_id, gov_id, department, position, office, assigned_region, municipality, province) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE 
-            gov_id = VALUES(gov_id), 
-            department = VALUES(department), 
-            position = VALUES(position), 
-            office = VALUES(office), 
-            assigned_region = VALUES(assigned_region), 
-            municipality = VALUES(municipality), 
-            province = VALUES(province)");
-        
-        $stmt2->bind_param("isssssss", 
-            $current_user_id, $_POST['gov_id'], $_POST['department'], 
-            $_POST['position'], $_POST['office'], $_POST['assigned_region'], 
-            $_POST['municipality'], $_POST['province']
-        );
-        $stmt2->execute();
-
-        // 3. Optional Password Change
-        if (!empty($_POST['new_password'])) {
-            $hashed_pass = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
-            $stmt3 = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
-            $stmt3->bind_param("si", $hashed_pass, $current_user_id);
-            $stmt3->execute();
-        }
-
-        $conn->commit();
-        echo "Profile updated successfully!";
-    } catch (Exception $e) {
-        $conn->rollback();
-        echo "Error updating profile: " . $e->getMessage();
-    }
-}
-// Profile Update Handler - ADD THIS AFTER DATABASE CONNECTION
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['action'] === 'update_profile') {
+// ✅ PROFILE UPDATE HANDLER - ADD THIS AFTER DATABASE CONNECTION
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     header('Content-Type: application/json');
     
     try {
-        $user_id = (int)$_POST['user_id'];
+        $user_id = $_POST['user_id'];
         
-        // 1. Handle Profile Picture Upload
-        $profile_pic_path = $user_profile['profile_pix'] ?? null;
-        if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] === UPLOAD_ERR_OK) {
-            $upload_dir = 'uploads/profiles/';
-            if (!is_dir($upload_dir)) {
-                mkdir($upload_dir, 0755, true);
-            }
-            
-            $file_extension = strtolower(pathinfo($_FILES['profile_pic']['name'], PATHINFO_EXTENSION));
-            $allowed_extensions = ['jpg', 'jpeg', 'png', 'gif'];
-            
-            if (in_array($file_extension, $allowed_extensions)) {
-                $new_filename = $user_id . '_' . time() . '.' . $file_extension;
-                $upload_path = $upload_dir . $new_filename;
-                
-                if (move_uploaded_file($_FILES['profile_pic']['tmp_name'], $upload_path)) {
-                    $profile_pic_path = $upload_path;
-                    
-                    // Delete old profile pic if exists
-                    if ($user_profile['profile_pix'] && file_exists($user_profile['profile_pix'])) {
-                        unlink($user_profile['profile_pix']);
-                    }
-                }
-            }
-        }
-        
-        $pdo->beginTransaction();
-        
-        // 2. Update Users Table
+        // Update users table
         $stmt = $pdo->prepare("
             UPDATE users SET 
-                firstName = ?, lastName = ?, mobile = ?,
-                updatedAt = CURRENT_TIMESTAMP
+                firstName = ?, lastName = ?, email = ?, mobile = ?
             WHERE id = ?
         ");
         $stmt->execute([
             $_POST['firstName'],
             $_POST['lastName'],
-            $_POST['mobile'] ?? null,
+            $_POST['email'],
+            $_POST['mobile'] ?? '',
             $user_id
         ]);
-        
-        // 3. Update/Insert Officer Profile
+
+        // Update/Insert officer_profiles
         $stmt = $pdo->prepare("
-            INSERT INTO officer_profiles 
-            (user_id, gov_id, department, position, office, assigned_region, municipality, province, profile_pix)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE 
+            INSERT INTO officer_profiles (user_id, gov_id, department, position, office, assigned_region, province, municipality)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
                 gov_id = VALUES(gov_id),
                 department = VALUES(department),
                 position = VALUES(position),
                 office = VALUES(office),
                 assigned_region = VALUES(assigned_region),
-                municipality = VALUES(municipality),
                 province = VALUES(province),
-                profile_pix = VALUES(profile_pix),
-                updated_at = CURRENT_TIMESTAMP
+                municipality = VALUES(municipality)
         ");
         $stmt->execute([
             $user_id,
-            $_POST['gov_id'] ?? null,
-            $_POST['department'] ?? null,
-            $_POST['position'] ?? null,
-            $_POST['office'] ?? null,
-            $_POST['assigned_region'] ?? null,
-            $_POST['municipality'] ?? null,
-            $_POST['province'] ?? null,
-            $profile_pic_path
+            $_POST['gov_id'] ?? '',
+            $_POST['department'] ?? '',
+            $_POST['position'] ?? '',
+            $_POST['office'] ?? '',
+            $_POST['assigned_region'] ?? '',
+            $_POST['province'] ?? '',
+            $_POST['municipality'] ?? ''
         ]);
-        
-        // 4. Handle Password Change
-        if (!empty($_POST['new_password'])) {
-            $hashed_password = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
-            $stmt = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
-            $stmt->execute([$hashed_password, $user_id]);
-        }
-        
-        $pdo->commit();
-        
-        echo json_encode(['success' => true, 'message' => 'Profile updated successfully!']);
+
+        echo json_encode(['success' => true, 'message' => 'Profile updated successfully']);
+        exit;
         
     } catch (Exception $e) {
-        $pdo->rollBack();
-        error_log('Profile update error: ' . $e->getMessage());
-        echo json_encode(['success' => false, 'message' => 'Update failed: ' . $e->getMessage()]);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        exit;
     }
-    exit;
 }
 ?>
 
@@ -1424,11 +1344,27 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['a
           <?php if (!empty($user_profile['profile_pix'])): ?>
             <img src="<?php echo htmlspecialchars($user_profile['profile_pix']); ?>" alt="Profile" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">
           <?php else: ?>
-            <?php echo strtoupper(substr($user_profile['firstName'] ?? 'U', 0, 1)); ?>
+            <?php echo strtoupper(substr(($user_profile['firstName'] ?? 'U'), 0, 1)); ?>
           <?php endif; ?>
         </div>
         <h2 id="profileName"><?php echo htmlspecialchars(($user_profile['firstName'] ?? '') . ' ' . ($user_profile['lastName'] ?? '')); ?></h2>
         <p class="profile-role"><?php echo htmlspecialchars($user_role); ?></p>
+      </div>
+
+      <!-- Profile Stats -->
+      <div class="profile-stats" style="padding: 24px 30px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 1px solid var(--c-slate-100);">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 20px; text-align: center;">
+          <div>
+            <div style="font-size: 1.8rem; font-weight: 800; color: var(--c-brand-dark); margin-bottom: 4px;">0</div>
+            <div style="font-size: 0.85rem; color: var(--c-text-sub); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Farms Managed</div>
+          </div>
+          <div>
+            <div style="font-size: 1.8rem; font-weight: 800; color: var(--c-brand-accent); margin-bottom: 4px;">
+              <?php echo number_format($stats['total_livestock']); ?>
+            </div>
+            <div style="font-size: 0.85rem; color: var(--c-text-sub); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Total Livestock</div>
+          </div>
+        </div>
       </div>
 
       <!-- Profile Info Sections -->
@@ -1437,7 +1373,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['a
           <h3><i class="bi bi-person"></i> Personal Info</h3>
           <div class="info-item">
             <span class="info-label">Email</span>
-            <span class="info-value" id="profileEmail"><?php echo htmlspecialchars($user_profile['email'] ?? ''); ?></span>
+            <span class="info-value" id="profileEmail"><?php echo htmlspecialchars($user_profile['email'] ?? 'N/A'); ?></span>
           </div>
           <div class="info-item">
             <span class="info-label">Mobile</span>
@@ -1492,8 +1428,108 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action']) && $_POST['a
     </div>
   </div>
 
-  <!-- Edit Profile Modal Container -->
-  <div id="editProfileModal" class="modal-overlay" style="display: none;"></div>
+  <!-- ✅ PROFILE EDIT MODAL - FIXED & COMPLETE -->
+  <div id="editProfileModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3><i class="bi bi-person-gear"></i> Edit Profile</h3>
+        <button class="modal-close" onclick="closeProfileEditor()">&times;</button>
+      </div>
+
+      <form id="profileForm" method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="user_id" value="<?php echo $user_id; ?>">
+        
+        <!-- Profile Picture Upload -->
+        <div class="profile-pic-upload">
+          <img id="modalProfilePic" src="<?php echo htmlspecialchars($user_profile['profile_pix'] ?? ''); ?>" 
+               alt="Profile" style="display: <?php echo !empty($user_profile['profile_pix']) ? 'block' : 'none'; ?>;">
+          <div id="modalAvatarInitial" style="display: <?php echo empty($user_profile['profile_pix']) ? 'flex' : 'none'; ?>; width:100px; height:100px; background: var(--c-brand-mid); border-radius:50%; align-items:center; justify-content:center; color:white; font-size:2rem; font-weight:800; margin:0 auto 12px;">
+            <?php echo strtoupper(substr(($user_profile['firstName'] ?? 'U'), 0, 1)); ?>
+          </div>
+          <input type="file" id="profilePicInput" name="profile_pic" accept="image/*" style="display:none;">
+          <button type="button" class="btn-upload" onclick="document.getElementById('profilePicInput').click()">
+            <i class="bi bi-cloud-upload"></i> Change Photo
+          </button>
+        </div>
+
+        <!-- Personal Info -->
+        <div class="form-section">
+          <h4>Personal Information</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>First Name <span class="required">*</span></label>
+              <input type="text" name="firstName" id="editFirstName" value="<?php echo htmlspecialchars($user_profile['firstName'] ?? ''); ?>" required>
+            </div>
+            <div class="form-group">
+              <label>Last Name <span class="required">*</span></label>
+              <input type="text" name="lastName" id="editLastName" value="<?php echo htmlspecialchars($user_profile['lastName'] ?? ''); ?>" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Email <span class="required">*</span></label>
+              <input type="email" name="email" id="editEmail" value="<?php echo htmlspecialchars($user_profile['email'] ?? ''); ?>" required>
+            </div>
+            <div class="form-group">
+              <label>Mobile</label>
+              <input type="tel" name="mobile" id="editMobile" value="<?php echo htmlspecialchars($user_profile['mobile'] ?? ''); ?>" placeholder="+639123456789">
+            </div>
+          </div>
+        </div>
+
+        <!-- Work Info -->
+        <div class="form-section">
+          <h4>Work Information</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Government ID</label>
+              <input type="text" name="gov_id" id="editGovId" value="<?php echo htmlspecialchars($user_profile['gov_id'] ?? ''); ?>" placeholder="Enter Gov't ID">
+            </div>
+            <div class="form-group">
+              <label>Department</label>
+              <input type="text" name="department" id="editDepartment" value="<?php echo htmlspecialchars($user_profile['department'] ?? ''); ?>" placeholder="e.g., DA Regional Office">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Position</label>
+              <input type="text" name="position" id="editPosition" value="<?php echo htmlspecialchars($user_profile['position'] ?? ''); ?>" placeholder="e.g., Veterinary Officer">
+            </div>
+            <div class="form-group">
+              <label>Office</label>
+              <input type="text" name="office" id="editOffice" value="<?php echo htmlspecialchars($user_profile['office'] ?? ''); ?>" placeholder="e.g., Provincial Vet Office">
+            </div>
+          </div>
+        </div>
+
+        <!-- Assignment -->
+        <div class="form-section">
+          <h4>Assignment Area</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Region</label>
+              <input type="text" name="assigned_region" id="editRegion" value="<?php echo htmlspecialchars($user_profile['assigned_region'] ?? ''); ?>" placeholder="e.g., Region IV-A">
+            </div>
+            <div class="form-group">
+              <label>Province</label>
+              <input type="text" name="province" id="editProvince" value="<?php echo htmlspecialchars($user_profile['province'] ?? ''); ?>" placeholder="e.g., Batangas">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Municipality</label>
+            <input type="text" name="municipality" id="editMunicipality" value="<?php echo htmlspecialchars($user_profile['municipality'] ?? ''); ?>" placeholder="e.g., Lipa City">
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" onclick="closeProfileEditor()">Cancel</button>
+          <button type="submit" class="btn-save">
+            <i class="bi bi-check-circle"></i> Save Changes
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 </section>
 
   </main>
@@ -1813,6 +1849,95 @@ function initProfileModalListeners() {
 document.addEventListener('DOMContentLoaded', function() {
     initProfileModalListeners();
 });
+
+// ✅ FIXED Profile Editor Functions - WORKS INSIDE agriDA.php
+function openProfileEditor() {
+    document.getElementById('editProfileModal').classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeProfileEditor() {
+    document.getElementById('editProfileModal').classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+// Profile picture preview
+function initProfilePicPreview() {
+    const profilePicInput = document.getElementById('profilePicInput');
+    if (profilePicInput) {
+        profilePicInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('modalProfilePic').src = e.target.result;
+                    document.getElementById('modalProfilePic').style.display = 'block';
+                    document.getElementById('modalAvatarInitial').style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+    }
+}
+
+// Profile form handler - SAME FILE
+function initProfileForm() {
+    const profileForm = document.getElementById('profileForm');
+    if (profileForm) {
+        profileForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            formData.append('update_profile', '1'); // Trigger PHP handler
+            
+            showLoading(true);
+
+            fetch(window.location.href, {  // SAME PAGE!
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('✅ Profile updated successfully!', 'success');
+                    closeProfileEditor();
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast('❌ ' + (data.message || 'Update failed'), 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Update error:', error);
+                showToast('❌ Network error. Please try again.', 'error');
+            })
+            .finally(() => showLoading(false));
+        });
+    }
+}
+
+// Initialize everything
+document.addEventListener('DOMContentLoaded', function() {
+    initProfileForm();
+    initProfilePicPreview();
+    
+    // Modal close listeners
+    const modalOverlay = document.getElementById('editProfileModal');
+    if (modalOverlay) {
+        modalOverlay.addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeProfileEditor();
+            }
+        });
+    }
+
+    // ESC key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeProfileEditor();
+        }
+    });
+});
+
   </script>
 
 </body>

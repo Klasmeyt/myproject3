@@ -209,3 +209,121 @@ ADD COLUMN IF NOT EXISTS `profile_pix` VARCHAR(255) DEFAULT NULL AFTER `user_id`
 
 -- Insert a profile record for the user if it doesn't exist (assuming user ID 2 for Venneth)
 INSERT IGNORE INTO `officer_profiles` (user_id) VALUES (2);
+
+
+
+-- Farmer Profiles Table (for extended farmer profile data)
+
+CREATE TABLE `farmer_profiles` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL,
+  `gender` enum('Male','Female','Other') DEFAULT NULL,
+  `dob` date DEFAULT NULL,
+  `gov_id` varchar(100) DEFAULT NULL,
+  `address` text DEFAULT NULL,
+  `emergency_contact` varchar(255) DEFAULT NULL,
+  `profile_pix` varchar(255) DEFAULT NULL,
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_user_profile` (`user_id`),
+  KEY `user_id` (`user_id`),
+  FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Insert empty profiles for existing farmers
+INSERT IGNORE INTO `farmer_profiles` (user_id) 
+SELECT id FROM users WHERE role = 'Farmer';
+
+
+-- Insert Admin User (password: 'password')
+INSERT INTO `users` (`firstName`, `lastName`, `email`, `password`, `mobile`, `role`, `status`) 
+VALUES 
+('System', 'Admin', 'admin@agritrace.ph', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '+63 999 000 0001', 'Admin', 'Active')
+ON DUPLICATE KEY UPDATE 
+    `password` = '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
+    `mobile` = '+63 999 000 0001',
+    `role` = 'Admin',
+    `status` = 'Active';
+
+
+
+
+
+    -- Certificates Table for DA Camarines Sur
+CREATE TABLE `certificates` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `farm_id` int(11) NOT NULL,
+  `certificate_no` varchar(50) NOT NULL UNIQUE,
+  `recipient_name` varchar(255) NOT NULL,
+  `recipient_location` varchar(255) NOT NULL,
+  `scope` text NOT NULL,
+  `issued_by` varchar(255) DEFAULT 'Department of Agriculture - Camarines Sur',
+  `president_name` varchar(255) DEFAULT 'Regional Executive Director',
+  `president_title` varchar(255) DEFAULT 'DA Regional Field Office V',
+  `secretary_name` varchar(255) DEFAULT 'Provincial Agriculturist',
+  `secretary_title` varchar(255) DEFAULT 'Camarines Sur PAO',
+  `valid_until` date NOT NULL,
+  `status` enum('Active','Expired','Revoked') DEFAULT 'Active',
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `farm_id` (`farm_id`),
+  FOREIGN KEY (`farm_id`) REFERENCES `farms` (`id`) ON DELETE CASCADE,
+  INDEX `idx_certificate_no` (`certificate_no`),
+  INDEX `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+
+
+
+CREATE TABLE IF NOT EXISTS `farm_appeals` (
+    `id` int(11) NOT NULL AUTO_INCREMENT,
+    `farm_id` int(11) NOT NULL,
+    `user_id` int(11) NOT NULL,
+    `farm_name` varchar(255) NOT NULL,
+    `original_status` varchar(50) NOT NULL,
+    `rejection_reason` text,
+    `appeal_status` enum('Pending','Under Review','Approved','Rejected') DEFAULT 'Pending',
+    `appeal_notes` text,
+    `admin_notes` text,
+    `created_at` datetime NOT NULL,
+    `updated_at` datetime NOT NULL,
+    `resolved_at` datetime NULL,
+    PRIMARY KEY (`id`),
+    KEY `farm_id` (`farm_id`),
+    KEY `user_id` (`user_id`),
+    KEY `appeal_status` (`appeal_status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- 1. ADD rejection_reason column to farms table (REQUIRED for appeals)
+ALTER TABLE `farms` 
+ADD COLUMN `rejection_reason` TEXT NULL AFTER `status`;
+
+-- 2. ADD appeal_id column to farms table (REQUIRED for appeal tracking)
+ALTER TABLE `farms` 
+ADD COLUMN `appeal_id` INT(11) NULL AFTER `rejection_reason`,
+ADD KEY `idx_appeal_id` (`appeal_id`),
+ADD FOREIGN KEY (`appeal_id`) REFERENCES `farm_appeals`(`id`) ON DELETE SET NULL;
+
+
+CREATE TABLE IF NOT EXISTS `notifications` (
+    `id` int(11) NOT NULL AUTO_INCREMENT,
+    `user_id` int(11) NOT NULL DEFAULT 0,
+    `type` varchar(50) NOT NULL,
+    `title` varchar(255) NOT NULL,
+    `message` text NOT NULL,
+    `related_id` int(11) NOT NULL,
+    `related_type` varchar(50) NOT NULL,
+    `status` enum('Unread','Read') DEFAULT 'Unread',
+    `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `read_at` datetime NULL,
+    PRIMARY KEY (`id`),
+    KEY `user_id` (`user_id`),
+    KEY `type` (`type`),
+    KEY `status` (`status`),
+    KEY `related_id` (`related_id`),
+    KEY `related_type` (`related_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
