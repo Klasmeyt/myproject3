@@ -1,1944 +1,738 @@
 <?php
 session_start();
-
-// AUTHENTICATION CHECK
 if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
-    header('Location: login.php?redirect=' . urlencode($_SERVER['PHP_SELF']));
-    exit;
+    header('Location: login.php?redirect='.urlencode($_SERVER['PHP_SELF'])); exit;
 }
-
 $user_role = $_SESSION['user_role'] ?? '';
-$user_id = $_SESSION['user_id'] ?? 0;
+$user_id   = $_SESSION['user_id']   ?? 0;
 
-// Database connection
 try {
-    $pdo = new PDO('mysql:host=localhost;dbname=myproject4;charset=utf8mb4', 'root', '', [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+    $pdo = new PDO('mysql:host=localhost;dbname=myproject4;charset=utf8mb4','root','',[
+        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
     ]);
-} catch(PDOException $e) {
-    die('Database connection failed: ' . $e->getMessage());
-}
+} catch(PDOException $e) { die('Database error'); }
 
-// Fetch dashboard stats with proper error handling
-$stats = [
-    'approved_farms' => $pdo->query("SELECT COUNT(*) FROM farms WHERE status = 'Approved'")->fetchColumn(),
-    'pending_farms' => $pdo->query("SELECT COUNT(*) FROM farms WHERE status = 'Pending'")->fetchColumn(),
-    'active_incidents' => $pdo->query("SELECT COUNT(*) FROM incidents WHERE status IN ('Pending', 'In Progress')")->fetchColumn(),
-    'pending_reports' => $pdo->query("SELECT COUNT(*) FROM public_reports WHERE status = 'Pending'")->fetchColumn(),
-    'total_livestock' => $pdo->query("SELECT COALESCE(SUM(qty), 0) FROM livestock")->fetchColumn()
-];
-
-// Recent incidents
-$stmt = $pdo->query("
-    SELECT i.*, f.name as farm_name, u.firstName, u.lastName 
-    FROM incidents i 
-    LEFT JOIN farms f ON i.farmId = f.id 
-    LEFT JOIN users u ON i.reporterId = u.id 
-    ORDER BY i.createdAt DESC LIMIT 5
-");
-$recent_incidents = $stmt->fetchAll();
-
-// All farms for inspection
-$stmt = $pdo->query("
-    SELECT f.*, u.firstName, u.lastName,
-           (SELECT COALESCE(SUM(qty), 0) FROM livestock WHERE farmId = f.id) as total_livestock
-    FROM farms f 
-    LEFT JOIN users u ON f.ownerId = u.id 
-    ORDER BY f.createdAt DESC
-");
-$all_farms = $stmt->fetchAll();
-
-// All incidents
-$stmt = $pdo->query("
-    SELECT i.*, f.name as farm_name 
-    FROM incidents i 
-    LEFT JOIN farms f ON i.farmId = f.id 
-    ORDER BY i.priority DESC, i.createdAt DESC
-");
-$all_incidents = $stmt->fetchAll();
-
-// All public reports
-$stmt = $pdo->query("
-    SELECT * FROM public_reports 
-    ORDER BY createdAt DESC LIMIT 10
-");
-$public_reports = $stmt->fetchAll();
-
-// User profile data
-// User profile data - FIXED: Removed non-existent 'mobile' column
-// User profile data - ENHANCED
-$stmt = $pdo->prepare("
-    SELECT u.*, 
-           p.gov_id, p.department, p.position, p.office, 
-           p.assigned_region, p.municipality, p.province,
-           p.created_at as profile_created
-    FROM users u 
-    LEFT JOIN officer_profiles p ON u.id = p.user_id 
-    WHERE u.id = ?
-");
-$stmt->execute([$user_id]);
-$user_profile = $stmt->fetch();
-
-// Ensure mobile is handled properly
-$user_profile['mobile'] = $user_profile['mobile'] ?? 'N/A';
-
-// User display data
-$user_name = $user_profile ? trim(($user_profile['firstName'] ?? '') . ' ' . ($user_profile['lastName'] ?? '')) : 'User';
-$user_initial = strtoupper(substr($user_name, 0, 1));
-$user_fullname = $user_profile['firstName'] ?? 'Guest User';
-if ($user_profile['lastName']) {
-    $user_fullname .= ' ' . $user_profile['lastName'];
-}
-
-$analytics = [
-    'farm_stats' => [],
-    'livestock_stats' => [],
-    'regional_stats' => [],
-    'incident_stats' => [],
-    'totals' => [
-        'total_farms' => 0,
-        'total_livestock' => 0,
-        'total_incidents' => 0,
-        'active_incidents' => 0
-    ]
-];
-
-try {
-    // 1. Overall Totals
-    $analytics['totals']['total_farms'] = $pdo->query("SELECT COUNT(*) FROM farms")->fetchColumn();
-    $analytics['totals']['total_livestock'] = $pdo->query("SELECT COALESCE(SUM(qty), 0) FROM livestock")->fetchColumn();
-    $analytics['totals']['total_incidents'] = $pdo->query("SELECT COUNT(*) FROM incidents")->fetchColumn();
-    $analytics['totals']['active_incidents'] = $pdo->query("SELECT COUNT(*) FROM incidents WHERE status IN ('Pending', 'In Progress')")->fetchColumn();
-
-    // 2. Livestock Distribution by Type
-    $analytics['livestock_stats'] = $pdo->query("
-        SELECT type, SUM(qty) as total_qty, AVG(weight) as avg_weight 
-        FROM livestock 
-        GROUP BY type
-    ")->fetchAll(PDO::FETCH_ASSOC);
-
-    // 3. Regional Stats (Joining farms with officer_profiles for region data)
-    // Note: We use the assigned_region from officer_profiles linked via ownerId or a default
-    $analytics['regional_stats'] = $pdo->query("
-        SELECT 
-            COALESCE(op.assigned_region, 'General') as region,
-            COUNT(DISTINCT f.id) as farm_count,
-            COALESCE(SUM(l.qty), 0) as livestock_count
-        FROM farms f
-        LEFT JOIN officer_profiles op ON f.ownerId = op.user_id
-        LEFT JOIN livestock l ON f.id = l.farmId
-        GROUP BY region
-        ORDER BY livestock_count DESC
-        LIMIT 5
-    ")->fetchAll(PDO::FETCH_ASSOC);
-
-} catch (PDOException $e) {
-    // Silent fail or log error
-    error_log($e->getMessage());
-}
-
-// Helper for Swine count to prevent "null" errors in the card
-$swine_count = 0;
-foreach ($analytics['livestock_stats'] as $s) {
-    if ($s['type'] === 'Swine') {
-        $swine_count = $s['total_qty'];
-        break;
-    }
-}
-
-// ✅ PROFILE UPDATE HANDLER - ADD THIS AFTER DATABASE CONNECTION
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
+// ── AJAX HANDLERS ─────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD']==='POST') {
     header('Content-Type: application/json');
-    
-    try {
-        $user_id = $_POST['user_id'];
-        
-        // Update users table
-        $stmt = $pdo->prepare("
-            UPDATE users SET 
-                firstName = ?, lastName = ?, email = ?, mobile = ?
-            WHERE id = ?
-        ");
-        $stmt->execute([
-            $_POST['firstName'],
-            $_POST['lastName'],
-            $_POST['email'],
-            $_POST['mobile'] ?? '',
-            $user_id
-        ]);
+    if (!in_array($user_role,['Admin','Agriculture Official'])) {
+        echo json_encode(['success'=>false,'message'=>'Insufficient permissions']); exit;
+    }
 
-        // Update/Insert officer_profiles
-        $stmt = $pdo->prepare("
-            INSERT INTO officer_profiles (user_id, gov_id, department, position, office, assigned_region, province, municipality)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                gov_id = VALUES(gov_id),
-                department = VALUES(department),
-                position = VALUES(position),
-                office = VALUES(office),
-                assigned_region = VALUES(assigned_region),
-                province = VALUES(province),
-                municipality = VALUES(municipality)
-        ");
-        $stmt->execute([
-            $user_id,
-            $_POST['gov_id'] ?? '',
-            $_POST['department'] ?? '',
-            $_POST['position'] ?? '',
-            $_POST['office'] ?? '',
-            $_POST['assigned_region'] ?? '',
-            $_POST['province'] ?? '',
-            $_POST['municipality'] ?? ''
-        ]);
+    // APPROVE FARM
+    if (($_POST['action']??'')==='approve_farm') {
+        $farmId = (int)$_POST['farm_id'];
+        $s=$pdo->prepare("SELECT id,name,status FROM farms WHERE id=?"); $s->execute([$farmId]);
+        $farm=$s->fetch();
+        if(!$farm){echo json_encode(['success'=>false,'message'=>'Farm not found']); exit;}
+        if($farm['status']!=='Pending'){echo json_encode(['success'=>false,'message'=>"Farm already {$farm['status']}"]); exit;}
+        $pdo->prepare("UPDATE farms SET status='Approved',updatedAt=NOW() WHERE id=?")->execute([$farmId]);
+        $pdo->prepare("INSERT INTO audit_log(userId,action,tableName,recordId,details,ipAddress) VALUES(?,?,?,?,?,?)")
+            ->execute([$user_id,'APPROVE_FARM','farms',$farmId,json_encode(['farm_name'=>$farm['name'],'officer_id'=>$user_id]),$_SERVER['REMOTE_ADDR']??'']);
+        echo json_encode(['success'=>true,'message'=>"Farm '{$farm['name']}' approved!",'new_status'=>'Approved','farm_id'=>$farmId]); exit;
+    }
 
-        echo json_encode(['success' => true, 'message' => 'Profile updated successfully']);
-        exit;
-        
-    } catch (Exception $e) {
-        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
-        exit;
+    // REJECT FARM
+    if (($_POST['action']??'')==='reject_farm') {
+        $farmId = (int)$_POST['farm_id'];
+        $reason = $_POST['reason'] ?? 'No reason provided';
+        $s=$pdo->prepare("SELECT id,name,status FROM farms WHERE id=?"); $s->execute([$farmId]);
+        $farm=$s->fetch();
+        if(!$farm){echo json_encode(['success'=>false,'message'=>'Farm not found']); exit;}
+        if($farm['status']!=='Pending'){echo json_encode(['success'=>false,'message'=>"Farm already {$farm['status']}"]); exit;}
+        $pdo->prepare("UPDATE farms SET status='Rejected',rejection_reason=?,updatedAt=NOW() WHERE id=?")->execute([$reason,$farmId]);
+        $pdo->prepare("INSERT INTO audit_log(userId,action,tableName,recordId,details,ipAddress) VALUES(?,?,?,?,?,?)")
+            ->execute([$user_id,'REJECT_FARM','farms',$farmId,json_encode(['reason'=>$reason,'farm_name'=>$farm['name']]),$_SERVER['REMOTE_ADDR']??'']);
+        echo json_encode(['success'=>true,'message'=>"Farm '{$farm['name']}' rejected.",'new_status'=>'Rejected','farm_id'=>$farmId]); exit;
+    }
+
+    // RESOLVE INCIDENT
+    if (($_POST['action']??'')==='resolve_incident') {
+        $id=(int)$_POST['incident_id'];
+        $pdo->prepare("UPDATE incidents SET status='Resolved',resolvedAt=NOW(),updatedAt=NOW() WHERE id=?")->execute([$id]);
+        echo json_encode(['success'=>true,'message'=>'Incident resolved.']); exit;
+    }
+
+    // PROFILE UPDATE
+    if (isset($_POST['update_profile'])) {
+        try {
+            $pdo->prepare("UPDATE users SET firstName=?,lastName=?,email=?,mobile=? WHERE id=?")
+                ->execute([$_POST['firstName'],$_POST['lastName'],$_POST['email'],$_POST['mobile']??'',$user_id]);
+            $pdo->prepare("INSERT INTO officer_profiles(user_id,gov_id,department,position,office,assigned_region,province,municipality)
+                VALUES(?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE gov_id=VALUES(gov_id),department=VALUES(department),
+                position=VALUES(position),office=VALUES(office),assigned_region=VALUES(assigned_region),
+                province=VALUES(province),municipality=VALUES(municipality)")
+                ->execute([$user_id,$_POST['gov_id']??'',$_POST['department']??'',$_POST['position']??'',$_POST['office']??'',$_POST['assigned_region']??'',$_POST['province']??'',$_POST['municipality']??'']);
+            echo json_encode(['success'=>true,'message'=>'Profile updated!']); exit;
+        } catch(Exception $e){ echo json_encode(['success'=>false,'message'=>$e->getMessage()]); exit; }
     }
 }
-?>
 
+// ── FETCH DATA ────────────────────────────────────────────────────────────────
+$stats = [
+    'approved_farms'  => $pdo->query("SELECT COUNT(*) FROM farms WHERE status='Approved'")->fetchColumn(),
+    'pending_farms'   => $pdo->query("SELECT COUNT(*) FROM farms WHERE status='Pending'")->fetchColumn(),
+    'active_incidents'=> $pdo->query("SELECT COUNT(*) FROM incidents WHERE status IN('Pending','In Progress')")->fetchColumn(),
+    'pending_reports' => $pdo->query("SELECT COUNT(*) FROM public_reports WHERE status='Pending'")->fetchColumn(),
+    'total_livestock' => $pdo->query("SELECT COALESCE(SUM(qty),0) FROM livestock")->fetchColumn(),
+];
+
+$s=$pdo->query("SELECT i.*,f.name as farm_name,u.firstName,u.lastName FROM incidents i LEFT JOIN farms f ON i.farmId=f.id LEFT JOIN users u ON i.reporterId=u.id ORDER BY i.createdAt DESC LIMIT 5");
+$recent_incidents=$s->fetchAll();
+
+$s=$pdo->query("SELECT f.*,u.firstName,u.lastName,(SELECT COALESCE(SUM(qty),0) FROM livestock WHERE farmId=f.id) as total_livestock FROM farms f LEFT JOIN users u ON f.ownerId=u.id ORDER BY f.createdAt DESC");
+$all_farms=$s->fetchAll();
+
+$s=$pdo->query("SELECT i.*,f.name as farm_name FROM incidents i LEFT JOIN farms f ON i.farmId=f.id ORDER BY i.priority DESC,i.createdAt DESC");
+$all_incidents=$s->fetchAll();
+
+$s=$pdo->query("SELECT * FROM public_reports ORDER BY createdAt DESC LIMIT 20");
+$public_reports=$s->fetchAll();
+
+$s=$pdo->prepare("SELECT u.*,p.gov_id,p.department,p.position,p.office,p.assigned_region,p.municipality,p.province FROM users u LEFT JOIN officer_profiles p ON u.id=p.user_id WHERE u.id=?");
+$s->execute([$user_id]); $user_profile=$s->fetch();
+if(!$user_profile) $user_profile=[];
+$user_profile['mobile'] = $user_profile['mobile'] ?? '';
+$user_name  = trim(($user_profile['firstName']??'').' '.($user_profile['lastName']??''));
+$user_initial = strtoupper(substr($user_name,0,1));
+$user_role_label = $user_role;
+
+// Analytics
+$livestock_stats=$pdo->query("SELECT type,SUM(qty) as total_qty,AVG(weight) as avg_weight FROM livestock GROUP BY type")->fetchAll();
+$farm_by_status =$pdo->query("SELECT status,COUNT(*) as cnt FROM farms GROUP BY status")->fetchAll();
+$incident_by_priority=$pdo->query("SELECT priority,COUNT(*) as cnt FROM incidents GROUP BY priority")->fetchAll();
+$incident_by_status=$pdo->query("SELECT status,COUNT(*) as cnt FROM incidents GROUP BY status")->fetchAll();
+$monthly_farms=$pdo->query("SELECT DATE_FORMAT(createdAt,'%b') as month,COUNT(*) as cnt FROM farms WHERE createdAt>=DATE_SUB(NOW(),INTERVAL 6 MONTH) GROUP BY month ORDER BY createdAt")->fetchAll();
+$total_livestock=$stats['total_livestock'];
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>AgriTrace+ | Official Panel</title>
-  
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
-  
-  <style>
-    :root {
-        --c-brand-dark: #1A4731;
-        --c-brand-mid: #2D6A4F;
-        --c-brand-accent: #10B981;
-        --c-bg-page: #F8FAF9;
-        --c-bg-card: #ffffff;
-        --c-slate-50: #F1F5F9;
-        --c-slate-100: #E2E8F0;
-        --c-slate-200: #CBD5E1;
-        --c-text-main: #1E293B;
-        --c-text-sub: #64748B;
-        --c-danger: #EF4444;
-        --c-warning: #F59E0B;
-        --c-success: #10B981;
-        --sidebar-width: 280px;
-        --topbar-height: 70px;
-    }
-
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
-    body { font-family: 'DM Sans', sans-serif; background: var(--c-bg-page); color: var(--c-text-main); overflow-x: hidden; -webkit-font-smoothing: antialiased; }
-
-    .panel-sidebar { width: var(--sidebar-width); height: 100vh; position: fixed; top: 0; left: calc(-1 * var(--sidebar-width)); background: #ffffff; display: flex; flex-direction: column; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1000; border-right: 1px solid var(--c-slate-100); }
-    .panel-sidebar.open { transform: translateX(var(--sidebar-width)); box-shadow: 10px 0 30px rgba(0,0,0,0.08); }
-
-    .sidebar-header { padding: 24px; flex-shrink: 0; border-bottom: 1px solid var(--c-slate-50); }
-    .sidebar-logo { font-family: 'Syne', sans-serif; font-size: 1.6rem; font-weight: 800; color: var(--c-brand-dark); letter-spacing: -1px; }
-    .sidebar-logo span { color: var(--c-brand-accent); }
-    .sidebar-sub { font-size: 0.7rem; color: var(--c-text-sub); text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; margin-top: 4px; }
-
-    .sidebar-nav { flex: 1; overflow-y: auto; padding: 12px; scrollbar-width: thin; scrollbar-color: var(--c-slate-100) transparent; }
-    .sidebar-nav::-webkit-scrollbar { width: 4px; }
-    .sidebar-nav::-webkit-scrollbar-thumb { background: var(--c-slate-100); border-radius: 10px; }
-
-    .nav-item { display: flex; align-items: center; gap: 14px; padding: 12px 16px; margin-bottom: 4px; border-radius: 12px; color: var(--c-text-main); text-decoration: none; cursor: pointer; transition: all 0.2s ease; font-size: 0.95rem; font-weight: 500; }
-    .nav-item i { font-size: 1.2rem; color: var(--c-text-sub); }
-    .nav-item:hover { background: #F0FDF4; color: var(--c-brand-dark); }
-    .nav-item.active { background: linear-gradient(135deg, var(--c-brand-mid), var(--c-brand-dark)); color: #ffffff; box-shadow: 0 4px 12px rgba(26, 71, 49, 0.2); }
-    .nav-item.active i { color: var(--c-brand-accent); }
-    .nav-divider { height: 1px; background: var(--c-slate-50); margin: 16px; }
-    .nav-item.logout { color: var(--c-danger); }
-    .nav-item.logout:hover { background: #FEF2F2; }
-
-    .sidebar-footer { padding: 18px 20px; background: var(--c-slate-50); border-top: 1px solid var(--c-slate-100); flex-shrink: 0; }
-    .user-box { display: flex; align-items: center; gap: 12px; }
-    .user-avatar { width: 42px; height: 42px; background: linear-gradient(135deg, var(--c-brand-mid), var(--c-brand-dark)); color: #fff; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; box-shadow: 0 3px 6px rgba(0,0,0,0.1); }
-    .user-name { font-weight: 700; font-size: 0.9rem; color: var(--c-brand-dark); }
-    .user-role { font-size: 0.75rem; color: var(--c-text-sub); font-weight: 500; }
-
-    .topbar { position: fixed; top: 0; right: 0; left: 0; height: var(--topbar-height); background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 900; border-bottom: 1px solid var(--c-slate-100); }
-    .main-content { padding: 24px; margin-top: var(--topbar-height); transition: 0.3s; } padding: 24px !important;
-  margin-top: var(--topbar-height) !important;
-  transition: 0.3s !important;
-  padding-top: 90px !important;
-    .menu-btn { background: none; border: none; font-size: 1.6rem; color: var(--c-brand-dark); cursor: pointer; }
-    .sidebar-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.4); backdrop-filter: blur(2px); z-index: 999; display: none; }
-    .sidebar-overlay.open { display: block; }
-
-    .section { display: none; animation: slideUp 0.4s ease; }
-    .section.active { display: block; }
-    @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 20px; margin-bottom: 32px; }
-    .card { background: #fff; padding: 24px; border-radius: 18px; border: 1px solid var(--c-slate-100); box-shadow: 0 4px 12px rgba(0,0,0,0.04); }
-    .stat-val { font-size: 2.2rem; font-weight: 800; color: var(--c-brand-dark); display: block; line-height: 1; }
-    .stat-label { font-size: 0.8rem; color: var(--c-text-sub); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-top: 4px; }
-
-    .table-container { background: #fff; border-radius: 18px; border: 1px solid var(--c-slate-100); box-shadow: 0 4px 12px rgba(0,0,0,0.04); overflow: hidden; margin-bottom: 24px; }
-    .table-header { background: linear-gradient(135deg, var(--c-brand-mid), var(--c-brand-dark)); color: white; padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; }
-    .table-header h2 { margin: 0; font-size: 1.3rem; font-weight: 700; }
-    table { width: 100%; border-collapse: collapse; }
-    th { background: var(--c-slate-50); padding: 16px 20px; text-align: left; font-weight: 700; color: var(--c-text-main); font-size: 0.9rem; border-bottom: 2px solid var(--c-slate-100); }
-    td { padding: 16px 20px; border-bottom: 1px solid var(--c-slate-200); vertical-align: middle; }
-    tr:hover { background: #F8FAFC; }
-    .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
-    .status-approved { background: #D1FAE5; color: var(--c-success); }
-    .status-pending { background: #FEF3C7; color: var(--c-warning); }
-    .status-rejected { background: #FEE2E2; color: var(--c-danger); }
-    .priority-critical { background: #FEE2E2; color: #DC2626; }
-    .priority-high { background: #FEF3C7; color: #D97706; }
-    .btn { padding: 8px 16px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; text-decoration: none; display: inline-block; }
-    .btn-primary { background: var(--c-brand-accent); color: white; }
-    .btn-primary:hover { background: #059669; transform: translateY(-1px); }
-    .btn-danger { background: var(--c-danger); color: white; }
-    .btn-danger:hover { background: #DC2626; }
-    .btn-secondary { background: var(--c-slate-200); color: var(--c-text-main); }
-    
-    .search-box { width: 100%; padding: 14px 20px; border: 2px solid var(--c-slate-200); border-radius: 12px; font-size: 1rem; margin-bottom: 20px; }
-    .search-box:focus { outline: none; border-color: var(--c-brand-accent); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1); }
-
-    #map { height: 500px; border-radius: 18px; margin-bottom: 24px; }
-    #loadingOverlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); display: none; align-items: center; justify-content: center; z-index: 2000; }
-    .spinner { width: 50px; height: 50px; border: 4px solid var(--c-slate-200); border-top: 4px solid var(--c-brand-accent); border-radius: 50%; animation: spin 1s linear infinite; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-    .profile-form { background: #fff; border-radius: 18px; padding: 32px; border: 1px solid var(--c-slate-100); box-shadow: 0 4px 12px rgba(0,0,0,0.04); }
-    .form-group { margin-bottom: 24px; }
-    .form-label { display: block; font-weight: 700; color: var(--c-text-main); margin-bottom: 8px; font-size: 0.95rem; }
-    .form-input { width: 100%; padding: 14px 16px; border: 2px solid var(--c-slate-200); border-radius: 12px; font-size: 1rem; transition: all 0.2s; }
-    .form-input:focus { outline: none; border-color: var(--c-brand-accent); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1); }
-    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-
-    /* Geo-Monitoring Styles */
-    .geo-panel-container { max-width: 1200px; margin: 0 auto; }
-    .section-header { text-align: center; padding: 32px 24px 24px; }
-    .section-title { font-family: 'Syne', sans-serif; font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, var(--c-brand-dark), var(--c-brand-mid)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 8px 0; letter-spacing: -1px; }
-    .section-desc { font-size: 1.1rem; color: var(--c-text-sub); font-weight: 500; margin: 0; }
-    .geo-controls-card { background: #fff; border-radius: 20px; padding: 28px; border: 1px solid var(--c-slate-100); box-shadow: 0 8px 32px rgba(0,0,0,0.06); margin-bottom: 28px; display: grid; grid-template-columns: 1fr 1fr auto; gap: 32px; align-items: center; }
-    @media (max-width: 768px) { .geo-controls-card { grid-template-columns: 1fr; gap: 24px; } }
-    .info-group { display: flex; align-items: center; gap: 16px; }
-    .icon-box { width: 56px; height: 56px; background: linear-gradient(135deg, var(--c-brand-mid), var(--c-brand-accent)); border-radius: 16px; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.4rem; }
-    .farm-label { font-weight: 700; font-size: 1rem; color: var(--c-text-main); margin-bottom: 4px; }
-        .count-badge { background: linear-gradient(135deg, var(--c-brand-accent), #059669); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 800; font-size: 1.1rem; min-width: 48px; text-align: center; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); }
-    .action-group { display: flex; flex-direction: column; align-items: flex-end; gap: 16px; }
-    .toggle-pill { display: flex; background: var(--c-slate-50); border-radius: 25px; padding: 4px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); }
-    .toggle-btn { background: none; border: none; padding: 12px 20px; border-radius: 20px; cursor: pointer; font-weight: 600; color: var(--c-text-sub); display: flex; align-items: center; gap: 8px; font-size: 0.9rem; transition: all 0.2s ease; }
-    .toggle-btn.active { background: white; color: var(--c-brand-dark); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-    .btn-main, .btn-secondary { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; border: none; font-size: 0.9rem; }
-    .btn-main { background: linear-gradient(135deg, var(--c-brand-accent), #059669); color: white; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); }
-    .btn-main:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4); }
-    .btn-secondary { background: var(--c-slate-50); color: var(--c-text-main); border: 1px solid var(--c-slate-200); }
-    .map-section { background: #fff; border-radius: 24px; border: 1px solid var(--c-slate-100); box-shadow: 0 12px 40px rgba(0,0,0,0.08); overflow: hidden; }
-    .map-container { position: relative; }
-    .map-overlay-top { position: absolute; top: 20px; left: 24px; z-index: 1000; background: rgba(255,255,255,0.95); backdrop-filter: blur(12px); padding: 16px 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.3); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
-    .pulse-dot { width: 10px; height: 10px; background: var(--c-success); border-radius: 50%; animation: pulse 2s infinite; box-shadow: 0 0 0 0 rgba(16, 185, 129, 1); }
-    @keyframes pulse { 0% { transform: scale(0.95); opacity: 1; } 70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-    .map-legend { position: absolute; bottom: 24px; right: 24px; background: rgba(255,255,255,0.95); backdrop-filter: blur(12px); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.3); box-shadow: 0 8px 24px rgba(0,0,0,0.1); z-index: 1000; }
-    .legend-item { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 0.9rem; font-weight: 500; }
-    .legend-item:last-child { margin-bottom: 0; }
-    .legend-color { width: 20px; height: 20px; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-    .legend-color.low { background: #10b981; }
-    .legend-color.medium { background: #f59e0b; }
-    .legend-color.high { background: #ef4444; }
-
-    /* Responsive Grid for Stat Cards */
-  .stats-grid {
-    display: grid;
-    gap: 16px;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    margin-bottom: 32px;
-  }
-
-  /* Responsive Controls Card (Downloads & Quick Analytics) */
-  .geo-controls-card {
-    display: grid;
-    grid-template-columns: 1fr; /* Stacked by default on mobile */
-    gap: 24px;
-    margin-bottom: 28px;
-    background: #fff;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-  }
-
-  /* Desktop layout for controls */
-  @media (min-width: 768px) {
-    .geo-controls-card {
-      grid-template-columns: 1fr 1fr;
-    }
-  }
-
-  /* Button Groups */
-  .btn-group-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr); /* 2 columns on mobile */
-    gap: 8px;
-  }
-
-  @media (min-width: 480px) {
-    .btn-group-grid {
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    }
-  }
-
-  /* Typography Adjustments */
-  @media (max-width: 600px) {
-    .section-title { font-size: 1.5rem; }
-    .stat-val { font-size: 2rem !important; }
-    .table-container { margin: 0 -15px; border-radius: 0; } /* Edge-to-edge on mobile */
-  }
-    
-    @media (min-width: 1024px) {
-        .panel-sidebar { left: 0; }
-        .main-content { margin-left: var(--sidebar-width); }
-        .menu-btn { display: none; }
-        .sidebar-overlay { display: none !important; }
-    }
-
-    .stats-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 32px; }
-  .geo-controls-card { display: grid; grid-template-columns: 1fr; gap: 24px; margin-bottom: 28px; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-  @media (min-width: 768px) { .geo-controls-card { grid-template-columns: 1fr 1fr; } }
-  .btn-group-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  @media (min-width: 480px) { .btn-group-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); } }
-  :root {
-    --c-brand: #2ecc71;
-    --c-brand-dark: #27ae60;
-    --c-text-main: #2d3436;
-    --c-bg-light: #f9f9f9;
-    --shadow: 0 4px 12px rgba(0,0,0,0.08);
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>AgriTrace+ | Official Panel</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root{
+  --brand-dark:#1A4731;--brand-mid:#2D6A4F;--brand-acc:#10B981;
+  --bg:#F8FAF9;--card:#ffffff;--slate-50:#F1F5F9;--slate-100:#E2E8F0;
+  --slate-200:#CBD5E1;--text:#1E293B;--sub:#64748B;
+  --danger:#EF4444;--warn:#F59E0B;--success:#10B981;
+  --sw:280px;--th:70px;
 }
-
-.profile-container {
-    padding: 15px;
-    background-color: var(--c-bg-light);
-    min-height: 100vh;
-}
-
-.profile-card {
-    background: #fff;
-    border-radius: 16px;
-    box-shadow: var(--shadow);
-    max-width: 800px;
-    margin: 0 auto;
-    overflow: hidden;
-}
-
-.profile-header {
-    background: linear-gradient(135deg, var(--c-brand), var(--c-brand-dark));
-    color: white;
-    padding: 30px 20px;
-    text-align: center;
-}
-
-.avatar-circle {
-    width: 80px;
-    height: 80px;
-    background: rgba(255,255,255,0.2);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 2rem;
-    font-weight: bold;
-    margin: 0 auto 10px;
-    border: 3px solid #fff;
-}
-
-.form-section {
-    padding: 20px;
-    border-bottom: 1px solid #eee;
-}
-
-.section-title {
-    font-size: 1.1rem;
-    color: var(--c-brand-dark);
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.form-grid {
-    display: grid;
-    grid-template-columns: 1fr; /* Default mobile: 1 column */
-    gap: 15px;
-}
-
-@media (min-width: 600px) {
-    .form-grid {
-        grid-template-columns: 1fr 1fr; /* Desktop/Tablet: 2 columns */
-    }
-}
-
-.form-group {
-    display: flex;
-    flex-direction: column;
-}
-
-.form-group label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    margin-bottom: 6px;
-    color: #636e72;
-}
-
-.form-group input {
-    padding: 12px;
-    border: 1.5px solid #dfe6e9;
-    border-radius: 8px;
-    font-size: 1rem;
-    transition: border-color 0.3s;
-}
-
-.form-group input:focus {
-    outline: none;
-    border-color: var(--c-brand);
-}
-
-.input-disabled {
-    background-color: #f1f2f6;
-    cursor: not-allowed;
-}
-
-.form-actions {
-    padding: 25px 20px;
-    display: flex;
-    gap: 10px;
-}
-
-.btn-primary, .btn-secondary {
-    flex: 1;
-    padding: 14px;
-    border-radius: 8px;
-    font-weight: bold;
-    border: none;
-    cursor: pointer;
-}
-
-.btn-primary { background: var(--c-brand); color: white; }
-.btn-secondary { background: #dfe6e9; color: var(--c-text-main); }
-
-.btn-primary:active { transform: scale(0.98); }
-
-.geo-controls-card {
-  background: #fff !important;
-  border-radius: 20px !important;
-  padding: 28px !important;
-  border: 1px solid var(--c-slate-100) !important;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.06) !important;
-  margin-bottom: 28px !important;
-  display: grid !important;
-  grid-template-columns: 1fr 1fr 280px !important;  /* FIXED WIDTH */
-  gap: 32px !important;
-  align-items: center !important;
-  min-height: 120px !important;
-}
-
-@media (max-width: 992px) {
-  .geo-controls-card {
-    grid-template-columns: 1fr !important;
-    gap: 24px !important;
-    padding: 20px !important;
-  }
-}
-
-@media (max-width: 768px) {
-  .geo-controls-card {
-    padding: 16px !important;
-    gap: 20px !important;
-  }
-}
-
-/* Profile Styles - Mobile First */
-.profile-container {
-  padding: 20px;
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-.profile-card {
-  background: #fff;
-  border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.08);
-  overflow: hidden;
-  margin-bottom: 20px;
-}
-
-.profile-header {
-  background: linear-gradient(135deg, var(--c-brand-mid), var(--c-brand-dark));
-  color: white;
-  padding: 40px 30px 30px;
-  text-align: center;
-  position: relative;
-}
-
-.avatar-circle {
-  width: 100px;
-  height: 100px;
-  background: rgba(255,255,255,0.2);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 2.5rem;
-  font-weight: 800;
-  margin: 0 auto 16px;
-  border: 4px solid rgba(255,255,255,0.3);
-  backdrop-filter: blur(10px);
-  transition: all 0.3s ease;
-}
-
-.profile-role {
-  font-size: 0.9rem;
-  opacity: 0.9;
-  margin: 0;
-  font-weight: 500;
-}
-
-.profile-info {
-  padding: 30px;
-}
-
-.info-section {
-  margin-bottom: 28px;
-}
-
-.info-section h3 {
-  font-size: 1.1rem;
-  color: var(--c-brand-dark);
-  margin-bottom: 20px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 700;
-}
-
-.info-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--c-slate-100);
-}
-
-.info-label {
-  color: var(--c-text-sub);
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
-.info-value {
-  font-weight: 600;
-  color: var(--c-text-main);
-  text-align: right;
-}
-
-.profile-actions {
-  padding: 0 30px 30px;
-  text-align: center;
-}
-
-.btn-edit {
-  background: linear-gradient(135deg, var(--c-brand-accent), #059669);
-  color: white;
-  border: none;
-  padding: 16px 32px;
-  border-radius: 12px;
-  font-weight: 700;
-  font-size: 1rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 auto;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 16px rgba(16,185,129,0.3);
-}
-
-.btn-edit:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(16,185,129,0.4);
-}
-
-/* Modal Styles */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0,0,0,0.5);
-  backdrop-filter: blur(8px);
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  opacity: 0;
-  visibility: hidden;
-  transition: all 0.3s ease;
-}
-
-.modal-overlay.active {
-  opacity: 1;
-  visibility: visible;
-}
-
-.modal-content {
-  background: #fff;
-  border-radius: 20px;
-  max-width: 95vw;
-  max-height: 90vh;
-  width: 100%;
-  max-width: 500px;
-  overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-  transform: scale(0.8) translateY(20px);
-  transition: all 0.3s ease;
-}
-
-.modal-overlay.active .modal-content {
-  transform: scale(1) translateY(0);
-}
-
-.modal-header {
-  padding: 24px 28px 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--c-slate-100);
-  margin-bottom: 24px;
-}
-
-.modal-header h3 {
-  margin: 0;
-  font-size: 1.3rem;
-  color: var(--c-brand-dark);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  color: var(--c-text-sub);
-  cursor: pointer;
-  padding: 8px;
-  border-radius: 50%;
-  transition: all 0.2s;
-}
-
-.modal-close:hover {
-  background: var(--c-slate-100);
-  color: var(--c-text-main);
-}
-
-.profile-pic-upload {
-  text-align: center;
-  margin-bottom: 24px;
-}
-
-.profile-pic-upload img {
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 4px solid var(--c-slate-100);
-  margin-bottom: 12px;
-}
-
-.btn-upload {
-  background: var(--c-slate-50);
-  border: 2px dashed var(--c-slate-200);
-  color: var(--c-text-sub);
-  padding: 12px 24px;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-upload:hover {
-  background: var(--c-brand-accent);
-  color: white;
-  border-color: var(--c-brand-accent);
-}
-
-.form-section h4 {
-  font-size: 1.1rem;
-  color: var(--c-brand-dark);
-  margin-bottom: 20px;
-  padding-bottom: 8px;
-  border-bottom: 2px solid var(--c-slate-100);
-}
-
-.form-row {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-@media (min-width: 480px) {
-  .form-row {
-    flex-direction: row;
-  }
-  .form-row .form-group {
-    flex: 1;
-  }
-}
-
-.modal-actions {
-  padding: 24px;
-  border-top: 1px solid var(--c-slate-100);
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-}
-
-.btn-cancel, .btn-save {
-  padding: 14px 24px;
-  border-radius: 12px;
-  font-weight: 700;
-  border: none;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-cancel {
-  background: var(--c-slate-100);
-  color: var(--c-text-main);
-}
-
-.btn-save {
-  background: linear-gradient(135deg, var(--c-brand-accent), #059669);
-  color: white;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-cancel:hover { background: var(--c-slate-200); }
-.btn-save:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(16,185,129,0.4); }
-
-/* Responsive */
-@media (max-width: 480px) {
-  .profile-container { padding: 15px; }
-  .profile-info { padding: 20px; }
-  .info-item { flex-direction: column; gap: 4px; text-align: left; }
-  .info-value { text-align: left; }
-}
-
-.searchable-dropdown {
-  position: relative;
-  margin-bottom: 12px;
-}
-
-.searchable-dropdown input {
-  width: 100%;
-  padding: 14px 16px 14px 44px;
-  border: 2px solid var(--c-slate-200);
-  border-radius: 12px;
-  font-size: 1rem;
-  background: #fff url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTE5IDExQzE5IDguMDg4IDExLjkyMiA1IDE5IDVIMTZWMTZIMTZWMTRIMTZWMTZIMTYiIGZpbGw9IiM2NDc0OEIiLz4KPC9zdmc+') no-repeat 16px center;
-  background-size: 18px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.searchable-dropdown input:focus {
-  border-color: var(--c-brand-accent);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-}
-
-.dropdown-list {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  background: #fff;
-  border: 1px solid var(--c-slate-200);
-  border-radius: 12px;
-  max-height: 240px;
-  overflow-y: auto;
-  z-index: 100;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-  display: none;
-  margin-top: 4px;
-}
-
-.dropdown-list.active {
-  display: block;
-  animation: slideDown 0.2s ease;
-}
-
-@keyframes slideDown {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.dropdown-item {
-  padding: 14px 16px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--c-slate-100);
-  font-size: 0.95rem;
-  transition: all 0.2s;
-}
-
-.dropdown-item:hover,
-.dropdown-item.selected {
-  background: var(--c-brand-accent);
-  color: white;
-}
-
-.dropdown-item:last-child {
-  border-bottom: none;
-}
-
-.required {
-  color: var(--c-danger);
-}
-  </style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0;}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden;}
+.sidebar{width:var(--sw);height:100vh;position:fixed;top:0;left:calc(-1 * var(--sw));background:#fff;display:flex;flex-direction:column;transition:transform .3s cubic-bezier(.4,0,.2,1);z-index:1000;border-right:1px solid var(--slate-100);}
+.sidebar.open{transform:translateX(var(--sw));box-shadow:10px 0 30px rgba(0,0,0,.08);}
+.sidebar-hdr{padding:24px;flex-shrink:0;border-bottom:1px solid var(--slate-50);}
+.logo{font-family:'Syne',sans-serif;font-size:1.6rem;font-weight:800;color:var(--brand-dark);letter-spacing:-1px;}
+.logo span{color:var(--brand-acc);}
+.sidebar-sub{font-size:.7rem;color:var(--sub);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-top:4px;}
+.sidebar-nav{flex:1;overflow-y:auto;padding:12px;scrollbar-width:thin;}
+.nav-item{display:flex;align-items:center;gap:14px;padding:12px 16px;margin-bottom:4px;border-radius:12px;color:var(--text);cursor:pointer;transition:.2s;font-size:.95rem;font-weight:500;}
+.nav-item i{font-size:1.2rem;color:var(--sub);}
+.nav-item:hover{background:#F0FDF4;color:var(--brand-dark);}
+.nav-item.active{background:linear-gradient(135deg,var(--brand-mid),var(--brand-dark));color:#fff;box-shadow:0 4px 12px rgba(26,71,49,.2);}
+.nav-item.active i{color:var(--brand-acc);}
+.nav-divider{height:1px;background:var(--slate-50);margin:16px;}
+.nav-item.logout{color:var(--danger);}
+.sidebar-footer{padding:18px 20px;background:var(--slate-50);border-top:1px solid var(--slate-100);flex-shrink:0;}
+.user-box{display:flex;align-items:center;gap:12px;}
+.user-av{width:42px;height:42px;background:linear-gradient(135deg,var(--brand-mid),var(--brand-dark));color:#fff;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;box-shadow:0 3px 6px rgba(0,0,0,.1);}
+.user-name{font-weight:700;font-size:.9rem;color:var(--brand-dark);}
+.user-role{font-size:.75rem;color:var(--sub);font-weight:500;}
+.topbar{position:fixed;top:0;right:0;left:0;height:var(--th);background:rgba(255,255,255,.8);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:space-between;padding:0 20px;z-index:900;border-bottom:1px solid var(--slate-100);}
+.main-content{padding:24px;margin-top:var(--th);transition:.3s;}
+.menu-btn{background:none;border:none;font-size:1.6rem;color:var(--brand-dark);cursor:pointer;}
+.overlay{position:fixed;inset:0;background:rgba(15,23,42,.4);backdrop-filter:blur(2px);z-index:999;display:none;}
+.overlay.open{display:block;}
+.section{display:none;animation:slideUp .4s ease;}
+.section.active{display:block;}
+@keyframes slideUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:20px;margin-bottom:32px;}
+.card{background:#fff;padding:24px;border-radius:18px;border:1px solid var(--slate-100);box-shadow:0 4px 12px rgba(0,0,0,.04);}
+.stat-val{font-size:2.2rem;font-weight:800;color:var(--brand-dark);display:block;line-height:1;}
+.stat-label{font-size:.8rem;color:var(--sub);text-transform:uppercase;font-weight:700;letter-spacing:.5px;margin-top:4px;}
+.table-container{background:#fff;border-radius:18px;border:1px solid var(--slate-100);box-shadow:0 4px 12px rgba(0,0,0,.04);overflow:hidden;margin-bottom:24px;}
+.table-hdr{background:linear-gradient(135deg,var(--brand-mid),var(--brand-dark));color:#fff;padding:20px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;}
+.table-hdr h2{margin:0;font-size:1.3rem;font-weight:700;}
+table{width:100%;border-collapse:collapse;}
+th{background:var(--slate-50);padding:16px 20px;text-align:left;font-weight:700;color:var(--text);font-size:.9rem;border-bottom:2px solid var(--slate-100);}
+td{padding:14px 20px;border-bottom:1px solid var(--slate-200);vertical-align:middle;}
+tr:hover{background:#F8FAFC;}
+.badge{padding:4px 12px;border-radius:20px;font-size:.75rem;font-weight:700;text-transform:uppercase;}
+.badge-approved{background:#D1FAE5;color:var(--success);}
+.badge-pending{background:#FEF3C7;color:var(--warn);}
+.badge-rejected{background:#FEE2E2;color:var(--danger);}
+.badge-resolved{background:#D1FAE5;color:var(--success);}
+.badge-progress{background:#DBEAFE;color:#1D4ED8;}
+.priority-critical{background:#FEE2E2;color:#DC2626;}
+.priority-high{background:#FEF3C7;color:#D97706;}
+.priority-medium{background:#DBEAFE;color:#1D4ED8;}
+.priority-low{background:#F1F5F9;color:var(--sub);}
+.btn{padding:8px 16px;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:.85rem;transition:.2s;display:inline-flex;align-items:center;gap:.375rem;text-decoration:none;font-family:inherit;}
+.btn-primary{background:var(--brand-acc);color:#fff;}.btn-primary:hover{background:#059669;transform:translateY(-1px);}
+.btn-danger{background:var(--danger);color:#fff;}.btn-danger:hover{background:#DC2626;}
+.btn-secondary{background:var(--slate-200);color:var(--text);}
+.search-box{width:100%;padding:12px 18px;border:2px solid var(--slate-200);border-radius:12px;font-size:.95rem;font-family:inherit;}
+.search-box:focus{outline:none;border-color:var(--brand-acc);box-shadow:0 0 0 3px rgba(16,185,129,.1);}
+#map{height:500px;border-radius:18px;margin-bottom:24px;}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);z-index:5000;display:none;align-items:center;justify-content:center;padding:1rem;}
+.modal-bg.open{display:flex;}
+.modal-box{background:#fff;border-radius:20px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3);animation:modalIn .3s ease;}
+@keyframes modalIn{from{transform:translateY(20px) scale(.95);opacity:0;}to{transform:translateY(0) scale(1);opacity:1;}}
+.modal-hdr{padding:1.5rem;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--slate-100);position:sticky;top:0;background:#fff;z-index:1;}
+.modal-hdr h3{margin:0;font-size:1.2rem;color:var(--brand-dark);}
+.modal-close{background:none;border:none;font-size:1.5rem;color:var(--sub);cursor:pointer;padding:.25rem;border-radius:.5rem;}
+.modal-close:hover{background:var(--slate-100);}
+.modal-body{padding:1.5rem;}
+.modal-footer{padding:1rem 1.5rem;border-top:1px solid var(--slate-100);display:flex;gap:.75rem;justify-content:flex-end;background:var(--slate-50);border-radius:0 0 20px 20px;}
+.form-group{margin-bottom:1.25rem;}
+.form-label{display:block;font-weight:700;color:var(--text);margin-bottom:.5rem;font-size:.9rem;}
+.form-input{width:100%;padding:12px 14px;border:2px solid var(--slate-200);border-radius:12px;font-size:.95rem;font-family:inherit;transition:.2s;}
+.form-input:focus{outline:none;border-color:var(--brand-acc);box-shadow:0 0 0 3px rgba(16,185,129,.1);}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:1rem;}
+.chart-grid{display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-bottom:24px;}
+.chart-wrap{position:relative;height:300px;}
+.info-row{display:flex;justify-content:space-between;padding:.875rem;background:var(--slate-50);border-radius:.5rem;margin-bottom:.5rem;}
+.toast{position:fixed;top:20px;right:20px;z-index:9999;padding:1rem 1.5rem;border-radius:12px;color:#fff;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.2);transform:translateX(400px);transition:transform .3s ease;}
+.toast.show{transform:translateX(0);}
+.toast-success{background:var(--success);}
+.toast-error{background:var(--danger);}
+#loadingOverlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.9);display:none;align-items:center;justify-content:center;z-index:8000;}
+.spinner{width:50px;height:50px;border:4px solid var(--slate-200);border-top:4px solid var(--brand-acc);border-radius:50%;animation:spin 1s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(min-width:1024px){.sidebar{left:0;}.main-content{margin-left:var(--sw);}.menu-btn{display:none;}.overlay{display:none!important;}}
+@media(max-width:600px){.stats-grid{grid-template-columns:repeat(2,1fr);}.chart-grid{grid-template-columns:1fr;}.form-row{grid-template-columns:1fr;}}
+</style>
 </head>
 <body>
+<div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+<div id="loadingOverlay"><div class="spinner"></div></div>
+<div id="toast" class="toast"></div>
 
-  <div class="sidebar-overlay" id="overlay" onclick="toggleSidebar()"></div>
-  <div id="loadingOverlay"><div class="spinner"></div></div>
-
-  <aside class="panel-sidebar" id="sidebar">
-    <div class="sidebar-header">
-      <div class="sidebar-logo">Agri<span>Trace+</span></div>
-      <div class="sidebar-sub">Official Portal</div>
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-hdr">
+    <div class="logo">Agri<span>Trace+</span></div>
+    <div class="sidebar-sub">Official Portal</div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-item active" onclick="navTo('dashboard',this)"><i class="bi bi-grid-1x2"></i><span>Dashboard</span></div>
+    <div class="nav-item" onclick="navTo('farms',this)"><i class="bi bi-house-check"></i><span>Farm Inspection</span></div>
+    <div class="nav-item" onclick="navTo('incidents',this)"><i class="bi bi-exclamation-triangle"></i><span>Incidents</span></div>
+    <div class="nav-item" onclick="navTo('public',this)"><i class="bi bi-file-earmark-text"></i><span>Public Reports</span></div>
+    <div class="nav-item" onclick="navTo('map',this)"><i class="bi bi-geo-alt"></i><span>Geo-Monitoring</span></div>
+    <div class="nav-item" onclick="navTo('analytics',this)"><i class="bi bi-bar-chart-line"></i><span>Analytics</span></div>
+    <div class="nav-item" onclick="navTo('profile',this)"><i class="bi bi-person-circle"></i><span>Profile</span></div>
+    <div class="nav-divider"></div>
+    <div class="nav-item logout" onclick="window.location.href='index.php'"><i class="bi bi-power"></i><span>Logout</span></div>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="user-box">
+      <div class="user-av"><?= htmlspecialchars($user_initial) ?></div>
+      <div><div class="user-name"><?= htmlspecialchars($user_name) ?></div><div class="user-role"><?= htmlspecialchars($user_role) ?></div></div>
     </div>
+  </div>
+</aside>
 
-    <nav class="sidebar-nav">
-      <div class="nav-item active" onclick="navTo('dashboard', this)">
-        <i class="bi bi-grid-1x2"></i> <span>Dashboard</span>
-      </div>
-      <div class="nav-item" onclick="navTo('farms', this)">
-        <i class="bi bi-house-check"></i> <span>Farm Inspection</span>
-      </div>
-      <div class="nav-item" onclick="navTo('incidents', this)">
-        <i class="bi bi-exclamation-triangle"></i> <span>Incidents</span>
-      </div>
-      <div class="nav-item" onclick="navTo('public', this)">
-        <i class="bi bi-file-earmark-text"></i> <span>Public Reports</span>
-      </div>
-      <div class="nav-item" onclick="navTo('map', this)">
-        <i class="bi bi-geo-alt"></i> <span>Geo-Monitoring</span>
-      </div>
-      <div class="nav-item" onclick="navTo('reports', this)">
-        <i class="bi bi-bar-chart-line"></i> <span>Analytics</span>
-      </div>
-      <div class="nav-item" onclick="navTo('profile', this)">
-        <i class="bi bi-person-circle"></i> <span>Profile</span>
-      </div>
-      
-      <div class="nav-divider"></div>
-      
-      <div class="nav-item logout" onclick="window.location.href='index.php'">
-        <i class="bi bi-power"></i> <span>Logout</span>
-      </div>
-    </nav>
+<header class="topbar">
+  <div style="display:flex;align-items:center;gap:12px;">
+    <button class="menu-btn" onclick="toggleSidebar()"><i class="bi bi-list"></i></button>
+    <strong id="page-title" style="color:var(--brand-dark);">Dashboard</strong>
+  </div>
+  <div class="user-av" style="width:34px;height:34px;font-size:.9rem;"><?= htmlspecialchars($user_initial) ?></div>
+</header>
 
-    <div class="sidebar-footer">
-      <div class="user-box">
-        <div class="user-avatar"><?php echo htmlspecialchars($user_initial); ?></div>
+<main class="main-content">
+
+  <!-- ═══ DASHBOARD ═══ -->
+  <section id="sec-dashboard" class="section active">
+    <div class="stats-grid">
+      <div class="card" style="border-left:4px solid var(--success);"><span class="stat-val"><?= $stats['approved_farms'] ?></span><span class="stat-label">Approved Farms</span></div>
+      <div class="card" style="border-left:4px solid var(--warn);"><span class="stat-val"><?= $stats['active_incidents'] ?></span><span class="stat-label">Active Incidents</span></div>
+      <div class="card" style="border-left:4px solid var(--danger);"><span class="stat-val"><?= $stats['pending_reports'] ?></span><span class="stat-label">Pending Reports</span></div>
+      <div class="card" style="border-left:4px solid var(--brand-mid);"><span class="stat-val"><?= number_format($stats['total_livestock']) ?></span><span class="stat-label">Total Livestock</span></div>
+    </div>
+    <div class="table-container">
+      <div class="table-hdr"><h2>Recent Incidents</h2></div>
+      <table><thead><tr><th>Title</th><th>Farm</th><th>Status</th><th>Priority</th><th>Date</th><th>Action</th></tr></thead>
+      <tbody>
+      <?php foreach($recent_incidents as $inc): ?>
+      <tr>
+        <td><?= htmlspecialchars($inc['title']) ?></td>
+        <td><?= htmlspecialchars($inc['farm_name']??'N/A') ?></td>
+        <td><span class="badge badge-<?= strtolower($inc['status']) ?>"><?= $inc['status'] ?></span></td>
+        <td><span class="badge priority-<?= strtolower($inc['priority']) ?>"><?= $inc['priority'] ?></span></td>
+        <td><?= date('M j',strtotime($inc['createdAt'])) ?></td>
+        <td><button class="btn btn-primary" onclick="resolveIncident(<?= $inc['id'] ?>)"><i class="bi bi-check-lg"></i> Resolve</button></td>
+      </tr>
+      <?php endforeach; ?>
+      <?php if(empty($recent_incidents)): ?><tr><td colspan="6" style="text-align:center;padding:40px;color:var(--sub);">No recent incidents</td></tr><?php endif; ?>
+      </tbody></table>
+    </div>
+  </section>
+
+  <!-- ═══ FARM INSPECTION ═══ -->
+  <section id="sec-farms" class="section">
+    <div class="table-container">
+      <div class="table-hdr">
+        <h2>Farm Inspection Portal</h2>
+        <input type="text" class="search-box" style="max-width:320px;padding:10px 16px;" placeholder="Search farms…" oninput="filterFarms(this.value)">
+      </div>
+      <table id="farmsTable"><thead><tr><th>Farm Name</th><th>Owner</th><th>Type</th><th>Address</th><th>Status</th><th>Livestock</th><th>Actions</th></tr></thead>
+      <tbody>
+      <?php foreach($all_farms as $farm): ?>
+      <tr data-name="<?= strtolower($farm['name']) ?>" data-owner="<?= strtolower(($farm['firstName']??'').' '.($farm['lastName']??'')) ?>">
+        <td><strong><?= htmlspecialchars($farm['name']) ?></strong></td>
+        <td><?= htmlspecialchars(($farm['firstName']??'').' '.($farm['lastName']??'')) ?></td>
+        <td><?= ucfirst($farm['type']) ?></td>
+        <td style="font-size:.85rem;max-width:180px;"><?= htmlspecialchars(substr($farm['address']??'',0,60)) ?><?= strlen($farm['address']??'')>60?'…':'' ?></td>
+        <td><span class="badge badge-<?= strtolower($farm['status']) ?>" id="farm-status-<?= $farm['id'] ?>"><?= $farm['status'] ?></span></td>
+        <td><?= $farm['total_livestock'] ?> heads</td>
+        <td id="farm-actions-<?= $farm['id'] ?>">
+          <?php if($farm['status']==='Pending'): ?>
+          <button class="btn btn-primary" onclick="approveFarm(<?= $farm['id'] ?>,this)"><i class="bi bi-check-lg"></i> Approve</button>
+          <button class="btn btn-danger" style="margin-left:6px;" onclick="rejectFarm(<?= $farm['id'] ?>,this)"><i class="bi bi-x-lg"></i> Reject</button>
+          <?php else: ?>
+          <span style="color:var(--sub);font-size:.875rem;">—</span>
+          <?php endif; ?>
+        </td>
+      </tr>
+      <?php endforeach; ?>
+      </tbody></table>
+    </div>
+  </section>
+
+  <!-- ═══ INCIDENTS ═══ -->
+  <section id="sec-incidents" class="section">
+    <div class="table-container">
+      <div class="table-hdr"><h2>Incident Management</h2></div>
+      <table><thead><tr><th>#</th><th>Title</th><th>Farm</th><th>Type</th><th>Status</th><th>Priority</th><th>Date</th><th>Action</th></tr></thead>
+      <tbody>
+      <?php foreach($all_incidents as $inc): ?>
+      <tr>
+        <td style="font-size:.8rem;color:var(--sub);">#<?= $inc['id'] ?></td>
+        <td><?= htmlspecialchars($inc['title']) ?></td>
+        <td><?= htmlspecialchars($inc['farm_name']??'N/A') ?></td>
+        <td><?= ucfirst($inc['type']) ?></td>
+        <td><span class="badge badge-<?= strtolower(str_replace(' ','-',$inc['status'])) ?>"><?= $inc['status'] ?></span></td>
+        <td><span class="badge priority-<?= strtolower($inc['priority']) ?>"><?= $inc['priority'] ?></span></td>
+        <td style="font-size:.85rem;"><?= date('M j',strtotime($inc['createdAt'])) ?></td>
+        <td><?php if($inc['status']!=='Resolved'&&$inc['status']!=='Closed'): ?>
+          <button class="btn btn-primary" onclick="resolveIncident(<?= $inc['id'] ?>)"><i class="bi bi-check-lg"></i> Resolve</button>
+        <?php else: ?><span style="color:var(--success);font-size:.875rem;">✓ Done</span><?php endif; ?></td>
+      </tr>
+      <?php endforeach; ?>
+      </tbody></table>
+    </div>
+  </section>
+
+  <!-- ═══ PUBLIC REPORTS ═══ -->
+  <section id="sec-public" class="section">
+    <div class="table-container">
+      <div class="table-hdr"><h2>Public Reports</h2></div>
+      <table><thead><tr><th>#</th><th>Type</th><th>Description</th><th>Contact</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
+      <tbody>
+      <?php foreach($public_reports as $rep): ?>
+      <tr>
+        <td style="font-size:.8rem;color:var(--sub);">#<?= $rep['id'] ?></td>
+        <td><span class="badge badge-pending"><?= htmlspecialchars($rep['reportType']) ?></span></td>
+        <td style="max-width:200px;font-size:.875rem;"><?= htmlspecialchars(substr($rep['description'],0,80)) ?>…</td>
+        <td><?= htmlspecialchars($rep['contactPhone']) ?></td>
+        <td><span class="badge badge-<?= strtolower($rep['status']) ?>"><?= $rep['status'] ?></span></td>
+        <td style="font-size:.85rem;"><?= date('M j',strtotime($rep['createdAt'])) ?></td>
+        <td><button class="btn btn-primary"><i class="bi bi-search"></i> Investigate</button></td>
+      </tr>
+      <?php endforeach; ?>
+      <?php if(empty($public_reports)): ?><tr><td colspan="7" style="text-align:center;padding:40px;color:var(--sub);">No reports yet</td></tr><?php endif; ?>
+      </tbody></table>
+    </div>
+  </section>
+
+  <!-- ═══ GEO-MONITORING ═══ -->
+  <section id="sec-map" class="section">
+    <div style="margin-bottom:24px;">
+      <h1 style="font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;background:linear-gradient(135deg,var(--brand-dark),var(--brand-mid));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin:0 0 6px;">Geo-Mapping Control</h1>
+      <p style="color:var(--sub);">Real-time livestock density and farm distribution</p>
+    </div>
+    <div class="card" style="display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:space-between;margin-bottom:24px;padding:20px 24px;">
+      <div style="display:flex;align-items:center;gap:16px;">
+        <div style="width:54px;height:54px;background:linear-gradient(135deg,var(--brand-mid),var(--brand-acc));border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.4rem;"><i class="bi bi-geo-fill"></i></div>
         <div>
-          <div class="user-name"><?php echo htmlspecialchars($user_fullname); ?></div>
-          <div class="user-role"><?php echo htmlspecialchars($user_role); ?></div>
+          <div style="font-weight:700;color:var(--text);">Live Farms</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+            <span style="background:linear-gradient(135deg,var(--brand-acc),#059669);color:#fff;padding:4px 12px;border-radius:20px;font-weight:800;font-size:1.05rem;box-shadow:0 4px 12px rgba(16,185,129,.3);"><?= count($all_farms) ?></span>
+            <small style="color:var(--sub);">Active Sites</small>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px;">
+        <div style="width:54px;height:54px;background:linear-gradient(135deg,var(--success),#059669);border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.4rem;"><i class="bi bi-activity"></i></div>
+        <div>
+          <div style="font-weight:700;color:var(--text);">Livestock Heads</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+            <span style="background:var(--success);color:#fff;padding:4px 12px;border-radius:20px;font-weight:800;font-size:1.05rem;"><?= number_format($stats['total_livestock']) ?></span>
+            <small style="color:var(--sub);">Total</small>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;background:var(--slate-50);border-radius:25px;padding:4px;">
+            <button onclick="setMapLayer('farms',this)" id="layerFarms" class="layer-btn active" style="background:#fff;border:none;padding:10px 18px;border-radius:20px;cursor:pointer;font-weight:600;font-size:.875rem;display:flex;align-items:center;gap:6px;box-shadow:0 4px 10px rgba(0,0,0,.1);transition:.2s;"><i class="bi bi-house-door"></i> Farms</button>
+            <button onclick="setMapLayer('livestock',this)" id="layerLivestock" class="layer-btn" style="background:none;border:none;padding:10px 18px;border-radius:20px;cursor:pointer;font-weight:600;font-size:.875rem;color:var(--sub);display:flex;align-items:center;gap:6px;transition:.2s;"><i class="bi bi-piggy-bank"></i> Livestock</button>
+            <button onclick="setMapLayer('incidents',this)" id="layerIncidents" class="layer-btn" style="background:none;border:none;padding:10px 18px;border-radius:20px;cursor:pointer;font-weight:600;font-size:.875rem;color:var(--sub);display:flex;align-items:center;gap:6px;transition:.2s;"><i class="bi bi-exclamation-triangle"></i> Incidents</button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            <button class="btn btn-primary" style="font-size:.85rem;" onclick="fitPhilippines()"><i class="bi bi-geo-alt"></i> Fit PH</button>
+            <button class="btn btn-secondary" style="font-size:.85rem;" onclick="refreshMap()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+            <!-- NEW FULL SCREEN BUTTON -->
+            <a href="maps/farm-map.php" 
+              class="btn" 
+              style="
+                background: #10b981; /* Matching Fit PH Emerald */
+                color: #fff;
+                font-size: .875rem;
+                font-weight: 600;
+                padding: 10px 20px;
+                border-radius: 20px; 
+                border: none;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                text-decoration: none;
+                transition: background 0.2s ease;
+                box-shadow: 0 2px 6px rgba(16, 185, 129, 0.2); /* Matching shadow tint */
+              " 
+              target="_blank" 
+              title="Open advanced full-screen map"
+              onmouseover="this.style.background='#059669'"
+              onmouseout="this.style.background='#10b981'">
+              <i class="bi bi-fullscreen" style="font-size: 0.9rem;"></i> 
+              Full Map
+            </a>
+        </div>
+</div>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden;position:relative;">
+      <div style="position:absolute;top:16px;left:16px;z-index:1000;background:rgba(255,255,255,.95);backdrop-filter:blur(12px);padding:12px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.3);box-shadow:0 8px 24px rgba(0,0,0,.1);">
+        <div style="font-weight:800;font-size:.9rem;color:var(--text);display:flex;align-items:center;gap:8px;">
+          <span style="width:10px;height:10px;background:var(--success);border-radius:50%;animation:pulse 2s infinite;"></span>
+          PHILIPPINES LIVESTOCK MONITORING
+        </div>
+        <small style="color:var(--sub);">Live data · <span id="mapLastUpdate"><?= date('H:i:s') ?></span></small>
+      </div>
+      <div id="map"></div>
+      <div style="position:absolute;bottom:20px;right:20px;z-index:1000;background:rgba(255,255,255,.95);backdrop-filter:blur(12px);padding:16px;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.1);">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="width:20px;height:20px;border-radius:4px;background:#10b981;"></div><span style="font-size:.875rem;">Low (&lt; 10)</span></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="width:20px;height:20px;border-radius:4px;background:#f59e0b;"></div><span style="font-size:.875rem;">Medium (11–50)</span></div>
+        <div style="display:flex;align-items:center;gap:10px;"><div style="width:20px;height:20px;border-radius:4px;background:#ef4444;"></div><span style="font-size:.875rem;">High (&gt; 50)</span></div>
+      </div>
+    </div>
+    <style>@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,.7);}70%{box-shadow:0 0 0 8px rgba(16,185,129,0);}100%{box-shadow:0 0 0 0 rgba(16,185,129,0);}}</style>
+  </section>
+
+  <!-- ═══ ANALYTICS ═══ -->
+  <section id="sec-analytics" class="section">
+    <div style="margin-bottom:24px;">
+      <h1 style="font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;background:linear-gradient(135deg,var(--brand-dark),var(--brand-mid));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin:0 0 6px;">Reports &amp; Analytics</h1>
+      <p style="color:var(--sub);">Livestock and farm performance insights</p>
+    </div>
+    <div class="stats-grid">
+      <div class="card" style="border-left:4px solid #3498db;"><span class="stat-val"><?= number_format($stats['total_livestock']) ?></span><span class="stat-label">Total Livestock</span></div>
+      <div class="card" style="border-left:4px solid var(--success);"><span class="stat-val"><?= $stats['approved_farms'] ?></span><span class="stat-label">Approved Farms</span></div>
+      <div class="card" style="border-left:4px solid var(--warn);"><span class="stat-val"><?= $stats['active_incidents'] ?></span><span class="stat-label">Active Incidents</span></div>
+      <div class="card" style="border-left:4px solid var(--danger);"><span class="stat-val"><?= $stats['pending_farms'] ?></span><span class="stat-label">Pending Farms</span></div>
+    </div>
+    <div class="chart-grid">
+      <div class="card"><h3 style="margin-bottom:16px;font-size:1.1rem;">Livestock Distribution by Type</h3><div class="chart-wrap"><canvas id="chartLivestock"></canvas></div></div>
+      <div class="card"><h3 style="margin-bottom:16px;font-size:1.1rem;">Farm Status</h3><div class="chart-wrap"><canvas id="chartFarmStatus"></canvas></div></div>
+    </div>
+    <div class="chart-grid">
+      <div class="card"><h3 style="margin-bottom:16px;font-size:1.1rem;">Incident Priority Breakdown</h3><div class="chart-wrap"><canvas id="chartIncidentPriority"></canvas></div></div>
+      <div class="card"><h3 style="margin-bottom:16px;font-size:1.1rem;">Incident Status</h3><div class="chart-wrap"><canvas id="chartIncidentStatus"></canvas></div></div>
+    </div>
+  </section>
+
+  <!-- ═══ PROFILE ═══ -->
+  <section id="sec-profile" class="section">
+    <div style="max-width:700px;margin:0 auto;">
+      <div class="card" style="background:linear-gradient(135deg,var(--brand-dark),var(--brand-mid));color:#fff;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;margin-bottom:24px;padding:2rem;">
+        <div style="width:90px;height:90px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:2.25rem;font-weight:800;border:4px solid rgba(255,255,255,.3);flex-shrink:0;"><?= htmlspecialchars($user_initial) ?></div>
+        <div style="flex:1;">
+          <span style="background:rgba(255,255,255,.2);padding:.3rem .875rem;border-radius:20px;font-size:.8rem;font-weight:700;text-transform:uppercase;"><?= htmlspecialchars($user_role) ?></span>
+          <h2 style="font-size:1.75rem;font-weight:800;margin:.5rem 0;"><?= htmlspecialchars($user_name) ?></h2>
+          <p style="opacity:.85;font-size:.9rem;"><?= htmlspecialchars($user_profile['email']??'') ?></p>
+        </div>
+        <button class="btn" style="background:rgba(255,255,255,.2);color:#fff;border:2px solid rgba(255,255,255,.4);" onclick="openModal('profileModal')"><i class="bi bi-pencil-square"></i> Edit</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="card"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-person" style="color:var(--brand-acc);"></i> Personal</h4>
+          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Email</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['email']??'—') ?></span></div>
+          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Mobile</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['mobile']??'—') ?></span></div>
+        </div>
+        <div class="card"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-briefcase" style="color:#3b82f6;"></i> Work</h4>
+          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Dept</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['department']??'—') ?></span></div>
+          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Position</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['position']??'—') ?></span></div>
+          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Office</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['office']??'—') ?></span></div>
+        </div>
+        <div class="card" style="grid-column:1/-1;"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-geo-alt" style="color:var(--danger);"></i> Assignment</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem;">
+            <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Region</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['assigned_region']??'—') ?></span></div>
+            <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Province</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['province']??'—') ?></span></div>
+            <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Municipality</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['municipality']??'—') ?></span></div>
+          </div>
         </div>
       </div>
     </div>
-  </aside>
+  </section>
 
-  <header class="topbar">
-    <div style="display:flex; align-items:center; gap:12px;">
-      <button class="menu-btn" onclick="toggleSidebar()">
-        <i class="bi bi-list"></i>
-      </button>
-      <strong id="page-title" style="color:var(--c-brand-dark);">Dashboard</strong>
-    </div>
-    <div class="user-avatar" style="width:34px; height:34px; font-size:0.9rem;"><?php echo htmlspecialchars($user_initial); ?></div>
-  </header>
+</main>
 
-  <main class="main-content">
-    
-    <!-- DASHBOARD -->
-    <section id="sec-dashboard" class="section active">
-      <div class="stats-grid">
-        <div class="card" style="border-left: 4px solid var(--c-success);">
-          <span class="stat-val"><?php echo $stats['approved_farms']; ?></span>
-          <span class="stat-label">Approved Farms</span>
+<!-- ═══ PROFILE MODAL ═══ -->
+<div id="profileModal" class="modal-bg">
+  <div class="modal-box">
+    <div class="modal-hdr"><h3><i class="bi bi-person-gear"></i> Edit Profile</h3><button class="modal-close" onclick="closeModal('profileModal')">×</button></div>
+    <form id="profileForm" method="POST">
+      <input type="hidden" name="update_profile" value="1">
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">First Name</label><input class="form-input" type="text" name="firstName" value="<?= htmlspecialchars($user_profile['firstName']??'') ?>"></div>
+          <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" type="text" name="lastName" value="<?= htmlspecialchars($user_profile['lastName']??'') ?>"></div>
         </div>
-        <div class="card" style="border-left: 4px solid var(--c-warning);">
-          <span class="stat-val"><?php echo $stats['active_incidents']; ?></span>
-          <span class="stat-label">Active Incidents</span>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" name="email" value="<?= htmlspecialchars($user_profile['email']??'') ?>"></div>
+          <div class="form-group"><label class="form-label">Mobile</label><input class="form-input" type="tel" name="mobile" value="<?= htmlspecialchars($user_profile['mobile']??'') ?>"></div>
         </div>
-        <div class="card" style="border-left: 4px solid var(--c-danger);">
-          <span class="stat-val"><?php echo $stats['pending_reports']; ?></span>
-          <span class="stat-label">Pending Reports</span>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Gov't ID</label><input class="form-input" type="text" name="gov_id" value="<?= htmlspecialchars($user_profile['gov_id']??'') ?>"></div>
+          <div class="form-group"><label class="form-label">Department</label><input class="form-input" type="text" name="department" value="<?= htmlspecialchars($user_profile['department']??'') ?>"></div>
         </div>
-        <div class="card" style="border-left: 4px solid var(--c-brand-mid);">
-          <span class="stat-val"><?php echo number_format($stats['total_livestock']); ?></span>
-          <span class="stat-label">Total Livestock</span>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Position</label><input class="form-input" type="text" name="position" value="<?= htmlspecialchars($user_profile['position']??'') ?>"></div>
+          <div class="form-group"><label class="form-label">Office</label><input class="form-input" type="text" name="office" value="<?= htmlspecialchars($user_profile['office']??'') ?>"></div>
         </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Region</label><input class="form-input" type="text" name="assigned_region" value="<?= htmlspecialchars($user_profile['assigned_region']??'') ?>"></div>
+          <div class="form-group"><label class="form-label">Province</label><input class="form-input" type="text" name="province" value="<?= htmlspecialchars($user_profile['province']??'') ?>"></div>
+        </div>
+        <div class="form-group"><label class="form-label">Municipality</label><input class="form-input" type="text" name="municipality" value="<?= htmlspecialchars($user_profile['municipality']??'') ?>"></div>
       </div>
-
-      <div class="table-container">
-        <div class="table-header">
-          <h2>Recent Incidents</h2>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Farm</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Date</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach ($recent_incidents as $incident): ?>
-            <tr>
-              <td><?php echo htmlspecialchars($incident['title']); ?></td>
-              <td><?php echo htmlspecialchars($incident['farm_name'] ?? 'N/A'); ?></td>
-              <td><span class="status-badge status-pending"><?php echo ucfirst($incident['status']); ?></span></td>
-              <td><span class="status-badge priority-<?php echo strtolower($incident['priority']); ?>"><?php echo ucfirst($incident['priority']); ?></span></td>
-              <td><?php echo date('M j', strtotime($incident['createdAt'])); ?></td>
-              <td><a href="#" class="btn btn-primary" onclick="resolveIncident(<?php echo $incident['id']; ?>)">Resolve</a></td>
-            </tr>
-            <?php endforeach; ?>
-            <?php if (empty($recent_incidents)): ?>
-            <tr><td colspan="6" style="text-align:center; padding:40px; color:var(--c-text-sub);">No recent incidents</td></tr>
-            <?php endif; ?>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- FARM INSPECTION -->
-    <section id="sec-farms" class="section">
-      <div class="table-container">
-        <div class="table-header">
-          <h2>Farm Inspection Portal</h2>
-          <input type="text" class="search-box" placeholder="Search farms by name, owner, or location..." onkeyup="searchFarms(this.value)">
-        </div>
-        <table id="farmsTable">
-          <thead>
-            <tr>
-              <th>Farm Name</th>
-              <th>Owner</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Livestock</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach ($all_farms as $farm): ?>
-            <tr>
-              <td><?php echo htmlspecialchars($farm['name']); ?></td>
-              <td><?php echo htmlspecialchars(($farm['firstName'] ?? '') . ' ' . ($farm['lastName'] ?? '')); ?></td>
-              <td><?php echo ucfirst(str_replace('_', ' ', $farm['type'])); ?> Farm</td>
-              <td><span class="status-badge status-<?php echo strtolower($farm['status']); ?>"><?php echo ucfirst($farm['status']); ?></span></td>
-              <td><?php echo $farm['total_livestock'] ?? 0; ?> heads</td>
-              <td>
-                <?php if ($farm['status'] === 'Pending'): ?>
-                <a href="#" class="btn btn-primary" onclick="approveFarm(<?php echo $farm['id']; ?>)">Approve</a>
-                <a href="#" class="btn btn-danger" style="margin-left:8px;" onclick="rejectFarm(<?php echo $farm['id']; ?>)">Reject</a>
-                <?php else: ?>
-                <span style="color:var(--c-text-sub);">No action needed</span>
-                <?php endif; ?>
-              </td>
-            </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- INCIDENTS -->
-    <section id="sec-incidents" class="section">
-      <div class="table-container">
-        <div class="table-header">
-          <h2>Incident Management</h2>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Farm</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach ($all_incidents as $incident): ?>
-            <tr>
-              <td><?php echo htmlspecialchars($incident['title']); ?></td>
-              <td><?php echo htmlspecialchars($incident['farm_name'] ?? 'N/A'); ?></td>
-              <td><?php echo ucfirst($incident['type']); ?></td>
-              <td><span class="status-badge status-pending"><?php echo ucfirst($incident['status']); ?></span></td>
-              <td><span class="status-badge priority-<?php echo strtolower($incident['priority']); ?>"><?php echo ucfirst($incident['priority']); ?></span></td>
-              <td>
-                <a href="#" class="btn btn-primary" onclick="resolveIncident(<?php echo $incident['id']; ?>)">Resolve</a>
-              </td>
-            </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- PUBLIC REPORTS -->
-    <section id="sec-public" class="section">
-      <div class="table-container">
-        <div class="table-header">
-          <h2>Public Reports</h2>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Description</th>
-              <th>Contact</th>
-              <th>Status</th>
-              <th>Date</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach ($public_reports as $report): ?>
-            <tr>
-              <td><?php echo ucfirst($report['reportType']); ?></td>
-              <td><?php echo htmlspecialchars(substr($report['description'], 0, 80)) . '...'; ?></td>
-              <td><?php echo htmlspecialchars($report['contactPhone']); ?></td>
-              <td><span class="status-badge status-pending"><?php echo ucfirst($report['status']); ?></span></td>
-              <td><?php echo date('M j', strtotime($report['createdAt'])); ?></td>
-              <td>
-                <a href="#" class="btn btn-primary">Investigate</a>
-              </td>
-            </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- GEO-MONITORING SECTION - COMPLETE & FIXED -->
-<section id="sec-map" class="section">
-  <div class="geo-panel-container">
-    <div class="section-header">
-      <h1 class="section-title">Geo-Mapping Control</h1>
-      <p class="section-desc">Real-time livestock density and farm distribution</p>
-    </div>
-
-    <div class="geo-controls-card">
-  <div class="info-group">
-    <div class="icon-box">
-      <i class="bi bi-geo-fill"></i>
-    </div>
-    <div>
-      <div class="farm-label">Live Farms</div>
-      <div style="display: flex; align-items: center; gap: 8px; margin-top: 2px;">
-        <span class="count-badge"><?php echo count($all_farms); ?></span>
-        <small style="color: var(--c-text-sub); font-weight: 500;">Active Sites</small>
-      </div>
-    </div>
-  </div>
-
-  <div class="info-group">
-    <div class="icon-box" style="background: linear-gradient(135deg, var(--c-success), #059669);">
-      <i class="bi bi-activity"></i>
-    </div>
-    <div>
-      <div class="farm-label">Livestock Heads</div>
-      <div style="display: flex; align-items: center; gap: 8px; margin-top: 2px;">
-        <span class="count-badge" style="background: var(--c-success);"><?php echo number_format($stats['total_livestock']); ?></span>
-        <small style="color: var(--c-text-sub); font-weight: 500;">Total Population</small>
-      </div>
-    </div>
-  </div>
-
-  <div class="action-group">
-    <div class="toggle-pill">
-      <button onclick="toggleLayer('livestock', event)" id="livestockToggle" class="toggle-btn">
-        <i class="bi bi-piggy-bank"></i> Livestock
-      </button>
-      <button onclick="toggleLayer('incidents', event)" id="incidentsToggle" class="toggle-btn">
-        <i class="bi bi-exclamation-triangle"></i> Incidents
-      </button>
-      <button onclick="toggleLayer('farms', event)" id="farmsToggle" class="toggle-btn active">
-        <i class="bi bi-house-door"></i> Farms
-      </button>
-    </div>
-    
-    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
-      <button onclick="loadFarmMap()" class="btn-main" style="padding: 10px 16px; font-size: 0.85rem; min-width: 140px;">
-        <i class="bi bi-box-arrow-up-right"></i> Fullscreen Map
-      </button>
-      <button onclick="fitBounds()" class="btn-secondary" style="padding: 10px 12px; font-size: 0.85rem;">
-        <i class="bi bi-geo-alt"></i> Fit PH
-      </button>
-      <button onclick="refreshMapData()" class="btn-secondary" style="padding: 10px 12px; font-size: 0.85rem;">
-        <i class="bi bi-arrow-clockwise"></i> Refresh
-      </button>
-    </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" onclick="closeModal('profileModal')">Cancel</button><button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save</button></div>
+    </form>
   </div>
 </div>
 
-    <div class="map-section">
-      <div class="map-container">
-        <div class="map-overlay-top">
-          <div style="font-weight: 800; font-size: 0.95rem; color: var(--c-text-main); display: flex; align-items: center; gap: 8px;">
-            <span class="pulse-dot"></span> 
-            <span>PHILIPPINES LIVESTOCK MONITORING</span>
-          </div>
-          <small style="color: var(--c-text-sub);">Live data feed • Last update: <span id="lastUpdate"><?php echo date('H:i:s'); ?></span></small>
-        </div>
-
-        <div id="map" style="height: 550px; border-radius: 20px;"></div>
-        
-        <div class="map-legend">
-          <div class="legend-item">
-            <div class="legend-color low"></div>
-            <span>Low (< 10)</span>
-          </div>
-          <div class="legend-item">
-            <div class="legend-color medium"></div>
-            <span>Medium (11-50)</span>
-          </div>
-          <div class="legend-item">
-            <div class="legend-color high"></div>
-            <span>High (> 50)</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-    <!-- REPORTS & ANALYTICS - ENHANCED WITH REAL DATA -->
-<section id="sec-reports" class="section">
-  <div class="geo-panel-container">
-    <div class="section-header">
-      <h1 class="section-title">Reports & Analytics</h1>
-      <p class="section-desc">Regional livestock and farm performance insights</p>
-    </div>
-
-    <div class="stats-grid">
-      <div class="card" style="border-left: 4px solid #3498db;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-          <span class="stat-label" style="font-size: 0.85rem; font-weight: bold;">TOTAL LIVESTOCK</span>
-          <i class="bi bi-bar-chart" style="font-size: 1.5rem; color: #3498db;"></i>
-        </div>
-        <div style="font-size: 2.5rem; font-weight: 800; color: #2c3e50; line-height: 1;">
-          <?php echo number_format($analytics['totals']['total_livestock']); ?>
-        </div>
-        <span class="stat-label"><?php echo number_format($analytics['totals']['total_farms']); ?> Active Farms</span>
-      </div>
-
-      <?php $top_region = $analytics['regional_stats'][0] ?? ['livestock_count' => 0, 'region' => 'N/A']; ?>
-      <div class="card" style="border-left: 4px solid #2ecc71;">
-        <div style="font-size: 2.5rem; font-weight: 800; color: #2c3e50;">
-            <?php echo number_format($top_region['livestock_count']); ?>
-        </div>
-        <span class="stat-label"><?php echo htmlspecialchars($top_region['region']); ?> Region</span>
-      </div>
-
-      <div class="card" style="border-left: 4px solid #f1c40f;">
-        <div style="font-size: 2.5rem; font-weight: 800; color: #2c3e50;">
-            <?php echo $analytics['totals']['active_incidents']; ?>
-        </div>
-        <span class="stat-label">Active Incidents</span>
-      </div>
-
-      <div class="card" style="border-left: 4px solid #e74c3c;">
-        <div style="font-size: 2.5rem; font-weight: 800; color: #2c3e50;">
-            <?php echo number_format($swine_count); ?>
-        </div>
-        <span class="stat-label">Total Swine</span>
-      </div>
-    </div>
-
-    <div class="geo-controls-card">
-      <div style="display: flex; flex-direction: column; gap: 16px;">
-        <div class="farm-label" style="font-size: 1.1rem; font-weight: 600;">📊 Generate Reports</div>
-        <div class="btn-group-grid">
-          <button onclick="downloadReport('pdf')" class="btn-main">Full PDF</button>
-          <button onclick="downloadReport('excel')" class="btn-secondary">Excel</button>
-          <button onclick="downloadReport('csv')" class="btn-secondary">CSV</button>
-          <button onclick="downloadReport('json')" class="btn-secondary">JSON</button>
-        </div>
-      </div>
-      <div style="display: flex; flex-direction: column; gap: 16px;">
-        <div class="farm-label" style="font-size: 1.1rem; font-weight: 600;">📈 Quick Analytics</div>
-        <div class="btn-group-grid">
-          <button class="btn-secondary">Farms</button>
-          <button class="btn-secondary">Livestock</button>
-          <button class="btn-secondary">Incidents</button>
-          <button class="btn-main">Charts</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="table-container" style="background: white; border-radius: 8px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-      <div class="table-header" style="margin-bottom: 15px;">
-        <h2 style="font-size: 1.2rem; color: #2c3e50;">Regional Livestock Distribution</h2>
-      </div>
-      <div style="overflow-x: auto;">
-        <table style="width: 100%; border-collapse: collapse; min-width: 450px;">
-          <thead>
-            <tr style="text-align: left; border-bottom: 2px solid #eee;">
-              <th style="padding: 12px;">Region</th>
-              <th style="padding: 12px;">Farms</th>
-              <th style="padding: 12px;">Livestock</th>
-              <th style="padding: 12px;">% Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php if (!empty($analytics['regional_stats'])): ?>
-                <?php foreach ($analytics['regional_stats'] as $region): ?>
-                <tr style="border-bottom: 1px solid #eee;">
-                  <td style="padding: 12px; font-weight: 600;"><?php echo htmlspecialchars($region['region']); ?></td>
-                  <td style="padding: 12px;"><?php echo $region['farm_count']; ?></td>
-                  <td style="padding: 12px; font-weight: 700; color: #3498db;"><?php echo number_format($region['livestock_count']); ?></td>
-                  <td style="padding: 12px;">
-                    <?php 
-                    $pct = ($analytics['totals']['total_livestock'] > 0) ? ($region['livestock_count'] / $analytics['totals']['total_livestock']) * 100 : 0;
-                    echo round($pct, 1) . '%';
-                    ?>
-                  </td>
-                </tr>
-                <?php endforeach; ?>
-            <?php else: ?>
-                <tr><td colspan="4" style="text-align: center; padding: 20px;">No data available</td></tr>
-            <?php endif; ?>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</section>
-
-    <!-- PROFILE -->
-<section id="sec-profile" class="section">
-  <div class="profile-container">
-    <!-- Profile Display Card -->
-    <div class="profile-card">
-      <div class="profile-header">
-        <div class="avatar-circle" id="profileAvatar">
-          <?php if (!empty($user_profile['profile_pix'])): ?>
-            <img src="<?php echo htmlspecialchars($user_profile['profile_pix']); ?>" alt="Profile" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">
-          <?php else: ?>
-            <?php echo strtoupper(substr(($user_profile['firstName'] ?? 'U'), 0, 1)); ?>
-          <?php endif; ?>
-        </div>
-        <h2 id="profileName"><?php echo htmlspecialchars(($user_profile['firstName'] ?? '') . ' ' . ($user_profile['lastName'] ?? '')); ?></h2>
-        <p class="profile-role"><?php echo htmlspecialchars($user_role); ?></p>
-      </div>
-
-      <!-- Profile Stats -->
-      <div class="profile-stats" style="padding: 24px 30px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 1px solid var(--c-slate-100);">
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 20px; text-align: center;">
-          <div>
-            <div style="font-size: 1.8rem; font-weight: 800; color: var(--c-brand-dark); margin-bottom: 4px;">0</div>
-            <div style="font-size: 0.85rem; color: var(--c-text-sub); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Farms Managed</div>
-          </div>
-          <div>
-            <div style="font-size: 1.8rem; font-weight: 800; color: var(--c-brand-accent); margin-bottom: 4px;">
-              <?php echo number_format($stats['total_livestock']); ?>
-            </div>
-            <div style="font-size: 0.85rem; color: var(--c-text-sub); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Total Livestock</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Profile Info Sections -->
-      <div class="profile-info">
-        <div class="info-section">
-          <h3><i class="bi bi-person"></i> Personal Info</h3>
-          <div class="info-item">
-            <span class="info-label">Email</span>
-            <span class="info-value" id="profileEmail"><?php echo htmlspecialchars($user_profile['email'] ?? 'N/A'); ?></span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Mobile</span>
-            <span class="info-value" id="profileMobile"><?php echo htmlspecialchars($user_profile['mobile'] ?? 'N/A'); ?></span>
-          </div>
-        </div>
-
-        <div class="info-section">
-          <h3><i class="bi bi-briefcase"></i> Work Info</h3>
-          <div class="info-item">
-            <span class="info-label">Gov't ID</span>
-            <span class="info-value" id="profileGovId"><?php echo htmlspecialchars($user_profile['gov_id'] ?? 'N/A'); ?></span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Department</span>
-            <span class="info-value" id="profileDepartment"><?php echo htmlspecialchars($user_profile['department'] ?? 'N/A'); ?></span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Position</span>
-            <span class="info-value" id="profilePosition"><?php echo htmlspecialchars($user_profile['position'] ?? 'N/A'); ?></span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Office</span>
-            <span class="info-value" id="profileOffice"><?php echo htmlspecialchars($user_profile['office'] ?? 'N/A'); ?></span>
-          </div>
-        </div>
-
-        <div class="info-section">
-          <h3><i class="bi bi-geo-alt"></i> Assignment</h3>
-          <div class="info-item">
-            <span class="info-label">Region</span>
-            <span class="info-value" id="profileRegion"><?php echo htmlspecialchars($user_profile['assigned_region'] ?? 'N/A'); ?></span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Province</span>
-            <span class="info-value" id="profileProvince"><?php echo htmlspecialchars($user_profile['province'] ?? 'N/A'); ?></span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Municipality</span>
-            <span class="info-value" id="profileMunicipality"><?php echo htmlspecialchars($user_profile['municipality'] ?? 'N/A'); ?></span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Edit Button -->
-      <div class="profile-actions">
-        <button class="btn-edit" onclick="openProfileEditor()">
-          <i class="bi bi-pencil-square"></i>
-          Edit Profile
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ✅ PROFILE EDIT MODAL - FIXED & COMPLETE -->
-  <div id="editProfileModal" class="modal-overlay">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3><i class="bi bi-person-gear"></i> Edit Profile</h3>
-        <button class="modal-close" onclick="closeProfileEditor()">&times;</button>
-      </div>
-
-      <form id="profileForm" method="POST" enctype="multipart/form-data">
-        <input type="hidden" name="user_id" value="<?php echo $user_id; ?>">
-        
-        <!-- Profile Picture Upload -->
-        <div class="profile-pic-upload">
-          <img id="modalProfilePic" src="<?php echo htmlspecialchars($user_profile['profile_pix'] ?? ''); ?>" 
-               alt="Profile" style="display: <?php echo !empty($user_profile['profile_pix']) ? 'block' : 'none'; ?>;">
-          <div id="modalAvatarInitial" style="display: <?php echo empty($user_profile['profile_pix']) ? 'flex' : 'none'; ?>; width:100px; height:100px; background: var(--c-brand-mid); border-radius:50%; align-items:center; justify-content:center; color:white; font-size:2rem; font-weight:800; margin:0 auto 12px;">
-            <?php echo strtoupper(substr(($user_profile['firstName'] ?? 'U'), 0, 1)); ?>
-          </div>
-          <input type="file" id="profilePicInput" name="profile_pic" accept="image/*" style="display:none;">
-          <button type="button" class="btn-upload" onclick="document.getElementById('profilePicInput').click()">
-            <i class="bi bi-cloud-upload"></i> Change Photo
-          </button>
-        </div>
-
-        <!-- Personal Info -->
-        <div class="form-section">
-          <h4>Personal Information</h4>
-          <div class="form-row">
-            <div class="form-group">
-              <label>First Name <span class="required">*</span></label>
-              <input type="text" name="firstName" id="editFirstName" value="<?php echo htmlspecialchars($user_profile['firstName'] ?? ''); ?>" required>
-            </div>
-            <div class="form-group">
-              <label>Last Name <span class="required">*</span></label>
-              <input type="text" name="lastName" id="editLastName" value="<?php echo htmlspecialchars($user_profile['lastName'] ?? ''); ?>" required>
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Email <span class="required">*</span></label>
-              <input type="email" name="email" id="editEmail" value="<?php echo htmlspecialchars($user_profile['email'] ?? ''); ?>" required>
-            </div>
-            <div class="form-group">
-              <label>Mobile</label>
-              <input type="tel" name="mobile" id="editMobile" value="<?php echo htmlspecialchars($user_profile['mobile'] ?? ''); ?>" placeholder="+639123456789">
-            </div>
-          </div>
-        </div>
-
-        <!-- Work Info -->
-        <div class="form-section">
-          <h4>Work Information</h4>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Government ID</label>
-              <input type="text" name="gov_id" id="editGovId" value="<?php echo htmlspecialchars($user_profile['gov_id'] ?? ''); ?>" placeholder="Enter Gov't ID">
-            </div>
-            <div class="form-group">
-              <label>Department</label>
-              <input type="text" name="department" id="editDepartment" value="<?php echo htmlspecialchars($user_profile['department'] ?? ''); ?>" placeholder="e.g., DA Regional Office">
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Position</label>
-              <input type="text" name="position" id="editPosition" value="<?php echo htmlspecialchars($user_profile['position'] ?? ''); ?>" placeholder="e.g., Veterinary Officer">
-            </div>
-            <div class="form-group">
-              <label>Office</label>
-              <input type="text" name="office" id="editOffice" value="<?php echo htmlspecialchars($user_profile['office'] ?? ''); ?>" placeholder="e.g., Provincial Vet Office">
-            </div>
-          </div>
-        </div>
-
-        <!-- Assignment -->
-        <div class="form-section">
-          <h4>Assignment Area</h4>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Region</label>
-              <input type="text" name="assigned_region" id="editRegion" value="<?php echo htmlspecialchars($user_profile['assigned_region'] ?? ''); ?>" placeholder="e.g., Region IV-A">
-            </div>
-            <div class="form-group">
-              <label>Province</label>
-              <input type="text" name="province" id="editProvince" value="<?php echo htmlspecialchars($user_profile['province'] ?? ''); ?>" placeholder="e.g., Batangas">
-            </div>
-          </div>
-          <div class="form-group">
-            <label>Municipality</label>
-            <input type="text" name="municipality" id="editMunicipality" value="<?php echo htmlspecialchars($user_profile['municipality'] ?? ''); ?>" placeholder="e.g., Lipa City">
-          </div>
-        </div>
-
-        <div class="modal-actions">
-          <button type="button" class="btn-cancel" onclick="closeProfileEditor()">Cancel</button>
-          <button type="submit" class="btn-save">
-            <i class="bi bi-check-circle"></i> Save Changes
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-</section>
-
-  </main>
-
-  <!-- Leaflet JS for Map -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
-
-  <script>
-    // Global map variables
-    let map;
-    let currentLayer = 'farms';
-    let farmsLayer, livestockLayer, incidentsLayer;
-
-    // Initialize map
-    function initMap() {
-      if (map) return; // Prevent multiple initializations
-      
-      map = L.map('map').setView([12.8797, 121.7740], 6); // Philippines center
-      
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(map);
-      
-      // Load initial farm data
-      loadFarmData();
-    }
-
-    // Load farm data for map
-    function loadFarmData() {
-      const farms = <?php echo json_encode($all_farms); ?>;
-      
-      farmsLayer = L.layerGroup().clearLayers();
-      farms.forEach(farm => {
-        if (farm.latitude && farm.longitude) {
-          const marker = L.marker([parseFloat(farm.latitude), parseFloat(farm.longitude)])
-            .bindPopup(`
-              <div style="min-width: 200px;">
-                <h4 style="margin: 0 0 8px 0; color: var(--c-brand-dark);">${farm.name}</h4>
-                <p><strong>Owner:</strong> ${farm.firstName || ''} ${farm.lastName || ''}</p>
-                <p><strong>Livestock:</strong> ${farm.total_livestock || 0} heads</p>
-                <p><strong>Status:</strong> <span style="color: var(--c-success);">${farm.status}</span></p>
-              </div>
-            `);
-          farmsLayer.addLayer(marker);
-        }
-      });
-      if (farmsLayer) farmsLayer.addTo(map);
-    }
-
-    function toggleSidebar() {
-      document.getElementById('sidebar').classList.toggle('open');
-      document.getElementById('overlay').classList.toggle('open');
-    }
-
-    function navTo(id, el) {
-      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-      document.getElementById('sec-' + id).classList.add('active');
-      
-      document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-      el.classList.add('active');
-      
-      document.getElementById('page-title').innerText = el.querySelector('span').innerText;
-      
-      if (window.innerWidth < 1024) toggleSidebar();
-      
-      // Initialize map when Geo-Monitoring is opened
-      if (id === 'map') {
-        setTimeout(() => {
-          if (typeof initMap === 'function' && !map) {
-            try {
-              initMap();
-            } catch (e) {
-              console.error('Map initialization failed:', e);
-            }
-          }
-        }, 300);
-      }
-    }
-
-    // Search farms
-    function searchFarms(query) {
-      const rows = document.querySelectorAll('#farmsTable tbody tr');
-      rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(query.toLowerCase()) ? '' : 'none';
-      });
-    }
-
-    // Farm actions (AJAX simulation)
-    function approveFarm(farmId) {
-      if (confirm('Approve this farm?')) {
-        alert('Farm approved! (API call would go here)');
-        // Add real AJAX call here
-      }
-    }
-
-    function rejectFarm(farmId) {
-      if (confirm('Reject this farm?')) {
-        alert('Farm rejected! (API call would go here)');
-        // Add real AJAX call here
-      }
-    }
-
-    function resolveIncident(incidentId) {
-      if (confirm('Mark this incident as resolved?')) {
-        alert('Incident resolved! (API call would go here)');
-        // Add real AJAX call here
-      }
-    }
-
-    // Map layer toggle - FIXED
-    function toggleLayer(layerType, event) {
-      if (!map) return;
-      
-      // Update toggle buttons
-      document.querySelectorAll('.toggle-btn').forEach(btn => btn.classList.remove('active'));
-      event.target.classList.add('active');
-      
-      currentLayer = layerType;
-      
-      // Toggle map layers
-      if (layerType === 'farms') {
-        if (farmsLayer) farmsLayer.addTo(map);
-        if (livestockLayer) map.removeLayer(livestockLayer);
-        if (incidentsLayer) map.removeLayer(incidentsLayer);
-      } else if (layerType === 'livestock') {
-        if (livestockLayer) livestockLayer.addTo(map);
-        if (farmsLayer) map.removeLayer(farmsLayer);
-        if (incidentsLayer) map.removeLayer(incidentsLayer);
-        loadLivestockData();
-      } else if (layerType === 'incidents') {
-        if (incidentsLayer) incidentsLayer.addTo(map);
-        if (farmsLayer) map.removeLayer(farmsLayer);
-        if (livestockLayer) map.removeLayer(livestockLayer);
-        loadIncidentsData();
-      }
-    }
-
-    // ✅ FIXED Farm Map Functions
-let mapLoaded = false;
-
-async function loadFarmMap() {
-    // Open fullscreen farm map with LIVE database data
-    window.open('maps/farm-map.php', '_blank', 'noopener,noreferrer');
-    showToast('Opening Interactive Farm Map...', 'success');
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ── Sidebar & Navigation ──────────────────────────────────────────────────────
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('overlay').classList.toggle('open');
+}
+function navTo(id, el) {
+    document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+    document.getElementById('sec-'+id).classList.add('active');
+    document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('page-title').textContent = el.querySelector('span').textContent;
+    if(window.innerWidth<1024) toggleSidebar();
+    if(id==='map') setTimeout(initMap,300);
+    if(id==='analytics') setTimeout(initCharts,200);
 }
 
-function fitBounds() {
-    if (!map) return;
-    map.fitBounds([
-        [4.5, 116.9], 
-        [21.2, 127.0]
-    ]);
+// ── Modals ────────────────────────────────────────────────────────────────────
+function openModal(id){ document.getElementById(id).classList.add('open'); document.body.style.overflow='hidden'; }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); document.body.style.overflow=''; }
+document.addEventListener('click', e=>{ if(e.target.classList.contains('modal-bg')) closeModal(e.target.id); });
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(msg, type='success'){
+    const t=document.getElementById('toast');
+    t.textContent=msg; t.className='toast toast-'+type+' show';
+    setTimeout(()=>t.classList.remove('show'),3500);
+}
+function showLoading(v){ document.getElementById('loadingOverlay').style.display=v?'flex':'none'; }
+
+// ── Farm Actions ──────────────────────────────────────────────────────────────
+function filterFarms(q){
+    document.querySelectorAll('#farmsTable tbody tr').forEach(row=>{
+        const txt=(row.dataset.name+' '+row.dataset.owner).toLowerCase();
+        row.style.display=txt.includes(q.toLowerCase())?'':'none';
+    });
 }
 
-function showToast(message, type = 'info') {
-    // Simple toast notification
-    const toast = document.createElement('div');
-    toast.style.cssText = `
-        position: fixed; top: 20px; right: 20px; 
-        background: ${type === 'success' ? '#10B981' : '#3B82F6'}; 
-        color: white; padding: 16px 24px; 
-        border-radius: 12px; font-weight: 600; 
-        z-index: 9999; transform: translateX(400px); 
-        transition: transform 0.3s ease;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-    `;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    
-    setTimeout(() => toast.style.transform = 'translateX(0)', 100);
-    setTimeout(() => {
-        toast.style.transform = 'translateX(400px)';
-        setTimeout(() => document.body.removeChild(toast), 300);
-    }, 3000);
-}
-
-    function loadLivestockData() {
-      // Mock livestock data - replace with real AJAX call
-      console.log('Loading livestock layer...');
-      livestockLayer = L.layerGroup().clearLayers();
-      
-      // Add some sample livestock markers
-      const livestockPoints = [
-        [14.5995, 120.9842, 25], // Manila
-        [10.3157, 123.8854, 45], // Cebu
-        [8.4817, 124.6463, 8]    // Cagayan de Oro
-      ];
-      
-      livestockPoints.forEach(([lat, lng, count]) => {
-        const color = count > 50 ? '#ef4444' : count > 10 ? '#f59e0b' : '#10b981';
-        const marker = L.circleMarker([lat, lng], {
-          radius: Math.max(8, count / 5),
-          fillColor: color,
-          color: '#000',
-          weight: 2,
-          opacity: 1,
-          fillOpacity: 0.7
-        }).bindPopup(`Livestock: ${count} heads`);
-        livestockLayer.addLayer(marker);
-      });
-      
-      livestockLayer.addTo(map);
-    }
-
-    function loadIncidentsData() {
-      // Mock incidents data
-      console.log('Loading incidents layer...');
-      incidentsLayer = L.layerGroup().clearLayers();
-      
-      const incidents = <?php echo json_encode($all_incidents); ?>;
-      incidents.forEach(incident => {
-        if (incident.latitude && incident.longitude) {
-          const marker = L.marker([parseFloat(incident.latitude), parseFloat(incident.longitude)])
-            .bindPopup(`<b>${incident.title}</b><br>Priority: ${incident.priority}`);
-          incidentsLayer.addLayer(marker);
-        }
-      });
-      
-      incidentsLayer.addTo(map);
-    }
-
-    // Reports & Analytics Functions
-function downloadReport(format, type = 'complete') {
-  const types = {
-    complete: 'Complete System Report',
-    farms: 'Farm Analytics',
-    livestock: 'Livestock Inventory', 
-    incidents: 'Incident Reports'
-  };
-  
-  showLoading(true);
-  
-  // Real AJAX call to generate and download report
-  fetch('api/generate_report.php', {
-    method: 'POST',
-    headers: { 
-      'Content-Type': 'application/json',
-      'X-Requested-With': 'XMLHttpRequest'
-    },
-    body: JSON.stringify({
-      format: format,
-      report_type: type,
-      user_id: <?php echo $user_id; ?>
-    })
-  })
-  .then(response => response.blob())
-  .then(blob => {
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `AgriTrace_${types[type] || 'Report'}_${new Date().toISOString().slice(0,10)}.${format}`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
-    showToast(`📥 ${types[type]} downloaded as ${format.toUpperCase()}!`, 'success');
-  })
-  .catch(error => {
-    console.error('Download failed:', error);
-    showToast('❌ Download failed. Please try again.', 'error');
-  })
-  .finally(() => showLoading(false));
-}
-
-function showAnalyticsChart() {
-  showToast('📊 Chart view coming soon! Use Excel/CSV for detailed analysis.', 'info');
-  // Future: Integrate Chart.js for live charts
-}
-
-function showLoading(show = true) {
-  const overlay = document.getElementById('loadingOverlay');
-  if (overlay) {
-    overlay.style.display = show ? 'flex' : 'none';
-  }
-}
-// Load Edit Profile Modal
-async function loadEditProfileModal() {
-    const modalContainer = document.getElementById('editProfileModal');
+async function approveFarm(farmId, btn) {
+    if(!confirm('Approve this farm registration?')) return;
+    showLoading(true);
     try {
-        const response = await fetch('edit-profile-modal.php');
-        modalContainer.innerHTML = await response.text();
-        
-        // Re-initialize event listeners after loading
-        initProfileModalListeners();
-    } catch (error) {
-        console.error('Failed to load edit profile modal:', error);
-        showToast('Failed to load profile editor', 'error');
-    }
+        const fd=new FormData(); fd.append('action','approve_farm'); fd.append('farm_id',farmId);
+        const r=await fetch('',{method:'POST',body:fd});
+        const d=await r.json();
+        if(d.success){
+            showToast(d.message,'success');
+            document.getElementById('farm-status-'+farmId).className='badge badge-approved';
+            document.getElementById('farm-status-'+farmId).textContent='Approved';
+            document.getElementById('farm-actions-'+farmId).innerHTML='<span style="color:var(--success);font-size:.875rem;">✓ Approved</span>';
+        } else showToast(d.message,'error');
+    } catch{showToast('Network error','error');}
+    showLoading(false);
 }
 
-function initProfileModalListeners() {
-    // Open modal button
-    const editButtons = document.querySelectorAll('.btn-edit');
-    editButtons.forEach(btn => {
-        btn.onclick = function() {
-            loadEditProfileModal().then(() => {
-                openEditProfile();
-            });
-        };
-    });
-    
-    // Global modal functions for iframe/modal communication
-    window.openEditProfile = function() {
-        document.getElementById('editProfileModal').classList.add('active');
-        document.body.style.overflow = 'hidden';
-    };
-    
-    window.closeEditProfile = function() {
-        document.getElementById('editProfileModal').classList.remove('active');
-        document.body.style.overflow = '';
-    };
+async function rejectFarm(farmId, btn) {
+    const reason=prompt('Reason for rejection (optional):');
+    if(reason===null) return;
+    showLoading(true);
+    try {
+        const fd=new FormData(); fd.append('action','reject_farm'); fd.append('farm_id',farmId); fd.append('reason',reason||'No reason provided');
+        const r=await fetch('',{method:'POST',body:fd});
+        const d=await r.json();
+        if(d.success){
+            showToast(d.message,'success');
+            document.getElementById('farm-status-'+farmId).className='badge badge-rejected';
+            document.getElementById('farm-status-'+farmId).textContent='Rejected';
+            document.getElementById('farm-actions-'+farmId).innerHTML='<span style="color:var(--danger);font-size:.875rem;">✗ Rejected</span>';
+        } else showToast(d.message,'error');
+    } catch{showToast('Network error','error');}
+    showLoading(false);
 }
 
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
-    initProfileModalListeners();
+async function resolveIncident(id){
+    if(!confirm('Mark this incident as resolved?')) return;
+    showLoading(true);
+    try {
+        const fd=new FormData(); fd.append('action','resolve_incident'); fd.append('incident_id',id);
+        const r=await fetch('',{method:'POST',body:fd});
+        const d=await r.json();
+        if(d.success){ showToast('Incident resolved!','success'); setTimeout(()=>location.reload(),1200); }
+        else showToast(d.message,'error');
+    } catch{showToast('Network error','error');}
+    showLoading(false);
+}
+
+// ── Profile Form ──────────────────────────────────────────────────────────────
+document.getElementById('profileForm').addEventListener('submit', async e=>{
+    e.preventDefault();
+    const btn=e.target.querySelector('[type=submit]'); btn.disabled=true;
+    const fd=new FormData(e.target);
+    try {
+        const r=await fetch('',{method:'POST',body:fd});
+        const d=await r.json();
+        if(d.success){showToast('Profile updated!','success');closeModal('profileModal');setTimeout(()=>location.reload(),1200);}
+        else showToast(d.message,'error');
+    } catch{showToast('Network error','error');}
+    btn.disabled=false;
 });
 
-// ✅ FIXED Profile Editor Functions - WORKS INSIDE agriDA.php
-function openProfileEditor() {
-    document.getElementById('editProfileModal').classList.add('active');
-    document.body.style.overflow = 'hidden';
-}
+// ── Leaflet Map ───────────────────────────────────────────────────────────────
+let map=null, layerGroups={farms:null,livestock:null,incidents:null}, activeLayer='farms';
 
-function closeProfileEditor() {
-    document.getElementById('editProfileModal').classList.remove('active');
-    document.body.style.overflow = '';
-}
+const farmsData    = <?= json_encode($all_farms) ?>;
+const incidentsData= <?= json_encode($all_incidents) ?>;
+const livestockData= <?= json_encode($livestock_stats) ?>;
 
-// Profile picture preview
-function initProfilePicPreview() {
-    const profilePicInput = document.getElementById('profilePicInput');
-    if (profilePicInput) {
-        profilePicInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    document.getElementById('modalProfilePic').src = e.target.result;
-                    document.getElementById('modalProfilePic').style.display = 'block';
-                    document.getElementById('modalAvatarInitial').style.display = 'none';
-                };
-                reader.readAsDataURL(file);
-            }
-        });
-    }
-}
+function initMap(){
+    if(map) return;
+    map=L.map('map').setView([12.8797,121.774],6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
 
-// Profile form handler - SAME FILE
-function initProfileForm() {
-    const profileForm = document.getElementById('profileForm');
-    if (profileForm) {
-        profileForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const formData = new FormData(this);
-            formData.append('update_profile', '1'); // Trigger PHP handler
-            
-            showLoading(true);
-
-            fetch(window.location.href, {  // SAME PAGE!
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showToast('✅ Profile updated successfully!', 'success');
-                    closeProfileEditor();
-                    setTimeout(() => location.reload(), 1500);
-                } else {
-                    showToast('❌ ' + (data.message || 'Update failed'), 'error');
-                }
-            })
-            .catch(error => {
-                console.error('Update error:', error);
-                showToast('❌ Network error. Please try again.', 'error');
-            })
-            .finally(() => showLoading(false));
-        });
-    }
-}
-
-// Initialize everything
-document.addEventListener('DOMContentLoaded', function() {
-    initProfileForm();
-    initProfilePicPreview();
-    
-    // Modal close listeners
-    const modalOverlay = document.getElementById('editProfileModal');
-    if (modalOverlay) {
-        modalOverlay.addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeProfileEditor();
-            }
-        });
-    }
-
-    // ESC key
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            closeProfileEditor();
+    // Farms layer
+    layerGroups.farms=L.layerGroup();
+    farmsData.forEach(farm=>{
+        if(farm.latitude && farm.longitude){
+            const color=farm.total_livestock>50?'#ef4444':farm.total_livestock>10?'#f59e0b':'#10b981';
+            const marker=L.circleMarker([parseFloat(farm.latitude),parseFloat(farm.longitude)],{
+                radius:Math.max(8,Math.min(20,farm.total_livestock/5+6)),
+                fillColor:color,color:'#fff',weight:2,opacity:1,fillOpacity:.85
+            }).bindPopup(`<div style="min-width:200px;">
+                <strong style="color:#064e3b;font-size:1rem;">${farm.name}</strong><br>
+                <span style="color:#6b7280;font-size:.85rem;">Owner: ${farm.firstName||''} ${farm.lastName||''}</span><br>
+                <span style="font-size:.9rem;"><b>${farm.total_livestock}</b> livestock heads</span><br>
+                <span style="padding:2px 8px;border-radius:20px;font-size:.75rem;font-weight:600;background:${farm.status==='Approved'?'#d1fae5':'#fef3c7'};color:${farm.status==='Approved'?'#065f46':'#92400e'};">${farm.status}</span>
+            </div>`);
+            layerGroups.farms.addLayer(marker);
         }
     });
-});
 
-  </script>
+    // Incidents layer
+    layerGroups.incidents=L.layerGroup();
+    incidentsData.forEach(inc=>{
+        if(inc.latitude && inc.longitude){
+            const marker=L.marker([parseFloat(inc.latitude),parseFloat(inc.longitude)],{
+                icon:L.divIcon({html:'<div style="background:#ef4444;color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);">⚠</div>',className:'',iconSize:[28,28],iconAnchor:[14,14]})
+            }).bindPopup(`<b>${inc.title}</b><br>Priority: ${inc.priority}<br>Status: ${inc.status}`);
+            layerGroups.incidents.addLayer(marker);
+        }
+    });
 
+    // Default: show farms
+    layerGroups.farms.addTo(map);
+    document.getElementById('mapLastUpdate').textContent=new Date().toLocaleTimeString();
+}
+
+function setMapLayer(type, btn){
+    if(!map) return;
+    activeLayer=type;
+    Object.values(layerGroups).forEach(lg=>{ if(lg) map.removeLayer(lg); });
+    if(layerGroups[type]) layerGroups[type].addTo(map);
+    document.querySelectorAll('.layer-btn').forEach(b=>{ b.style.background='none'; b.style.boxShadow='none'; b.style.color='var(--sub)'; });
+    btn.style.background='#fff'; btn.style.boxShadow='0 4px 10px rgba(0,0,0,.1)'; btn.style.color='var(--text)';
+}
+
+function fitPhilippines(){ if(map) map.fitBounds([[4.5,116.9],[21.2,127.0]]); }
+function refreshMap(){
+    if(map){ map.remove(); map=null; Object.keys(layerGroups).forEach(k=>layerGroups[k]=null); }
+    setTimeout(initMap,200);
+    showToast('Map refreshed','success');
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+let chartsInit=false;
+function initCharts(){
+    if(chartsInit) return;
+    chartsInit=true;
+
+    const lvData = <?= json_encode($livestock_stats) ?>;
+    const lvLabels = lvData.map(d=>d.type);
+    const lvValues = lvData.map(d=>parseInt(d.total_qty));
+
+    const farmStatusData = <?= json_encode($farm_by_status) ?>;
+    const incPriorityData= <?= json_encode($incident_by_priority) ?>;
+    const incStatusData  = <?= json_encode($incident_by_status) ?>;
+
+    const palette=['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#84cc16'];
+
+    // Livestock bar chart
+    new Chart(document.getElementById('chartLivestock'),{
+        type:'bar',
+        data:{labels:lvLabels,datasets:[{label:'Heads',data:lvValues,backgroundColor:palette.slice(0,lvLabels.length),borderRadius:8,borderSkipped:false}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{color:'#64748b'}},x:{ticks:{color:'#64748b'}}}}
+    });
+
+    // Farm status doughnut
+    new Chart(document.getElementById('chartFarmStatus'),{
+        type:'doughnut',
+        data:{labels:farmStatusData.map(d=>d.status),datasets:[{data:farmStatusData.map(d=>d.cnt),backgroundColor:['#10b981','#f59e0b','#ef4444'],borderWidth:0}]},
+        options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom'}}}
+    });
+
+    // Incident priority polar
+    new Chart(document.getElementById('chartIncidentPriority'),{
+        type:'polarArea',
+        data:{labels:incPriorityData.map(d=>d.priority),datasets:[{data:incPriorityData.map(d=>d.cnt),backgroundColor:['#ef4444aa','#f59e0baa','#3b82f6aa','#10b981aa']}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}
+    });
+
+    // Incident status pie
+    new Chart(document.getElementById('chartIncidentStatus'),{
+        type:'pie',
+        data:{labels:incStatusData.map(d=>d.status),datasets:[{data:incStatusData.map(d=>d.cnt),backgroundColor:palette.slice(0,incStatusData.length),borderWidth:0}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}
+    });
+}
+</script>
 </body>
 </html>

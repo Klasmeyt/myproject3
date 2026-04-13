@@ -80,37 +80,107 @@ function renderFarms(farms) {
 
         const count = parseInt(farm.total_livestock) || 0;
         
-        // Color Logic: 5-10 Green, 11-20 Yellow, 20+ Red
-        let markerColor = '#94a3b8'; // Default Gray (<5)
-        if (count >= 5 && count <= 10) markerColor = '#10b981';
-        else if (count > 10 && count <= 20) markerColor = '#f59e0b';
-        else if (count > 20) markerColor = '#ef4444';
+        // Color Logic with opacity for transparent circles
+        let fillColor = '#94a3b8', strokeColor = '#64748b'; // Default Gray (<5)
+        let radius = Math.max(8, Math.min(25, count * 1.2)); // Scale radius by count
+        
+        if (count >= 5 && count <= 10) {
+            fillColor = '#10b981'; // Green
+            strokeColor = '#059669';
+        } else if (count > 10 && count <= 20) {
+            fillColor = '#f59e0b'; // Yellow/Orange
+            strokeColor = '#d97706';
+        } else if (count > 20) {
+            fillColor = '#ef4444'; // Red
+            strokeColor = '#dc2626';
+        }
 
-        const icon = L.divIcon({
-            className: 'custom-farm-marker',
-            html: `<div class="marker-pin" style="background:${markerColor}">
-                    <span class="marker-count">${count}</span>
-                   </div>`,
-            iconSize: [30, 42],
-            iconAnchor: [15, 42]
+        // Create CIRCLE MARKER (transparent circle)
+        const circle = L.circleMarker([parseFloat(farm.latitude), parseFloat(farm.longitude)], {
+            radius: radius,
+            fillColor: fillColor,
+            color: strokeColor,
+            weight: 3,
+            opacity: 0.9,
+            fillOpacity: 0.7, // TRANSPARENT FILL
+            stroke: true,
+            className: 'farm-circle'
         });
 
         const popupContent = `
-            <div class="farm-popup" style="font-family: sans-serif; min-width: 150px;">
-                <h3 style="margin:0 0 8px 0; font-size:16px; color:#333;">${farm.name}</h3>
-                <div style="font-size:13px; color:#555;">
-                    <b>Owner:</b> ${farm.firstName || 'N/A'} ${farm.lastName || ''}<br>
-                    <b>Livestock:</b> <span style="color:${markerColor}; font-weight:bold;">${count} Heads</span><br>
-                    <b>Type:</b> ${farm.type || 'N/A'}<br>
-                    <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
-                    <b>Address:</b> ${farm.address || 'N/A'}
+            <div class="farm-popup" style="font-family: 'Inter', sans-serif; min-width: 280px; max-width: 300px;">
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 2px solid #e2e8f0;">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, ${fillColor}, ${strokeColor}); display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                        ${count}
+                    </div>
+                    <div>
+                        <h3 style="margin: 0 0 4px 0; font-size: 18px; font-weight: 700; color: #1e293b;">${farm.name}</h3>
+                        <div style="color: #64748b; font-size: 14px;">${farm.type} Farm</div>
+                    </div>
                 </div>
+                <div style="display: grid; grid-template-columns: 90px 1fr; gap: 8px 16px; font-size: 14px; line-height: 1.5;">
+                    <span style="font-weight: 600; color: #374151;">Owner:</span>
+                    <span>${farm.ownerName || 'N/A'}</span>
+                    
+                    <span style="font-weight: 600; color: #374151;">Livestock:</span>
+                    <span style="color: ${fillColor}; font-weight: 700; font-size: 16px;">${count.toLocaleString()} heads</span>
+                    
+                    <span style="font-weight: 600; color: #374151;">Status:</span>
+                    <span style="color: ${farm.status === 'Approved' ? '#10b981' : '#f59e0b'}; font-weight: 600;">${farm.status}</span>
+                    
+                    <span style="font-weight: 600; color: #374151;">Location:</span>
+                    <span style="font-size: 13px; color: #6b7280;">${farm.address || 'N/A'}</span>
+                </div>
+                ${farm.ownerMobile ? `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #f3f4f6; font-size: 13px;">
+                    <span style="font-weight: 600; color: #374151;">Contact:</span>
+                    <a href="tel:${farm.ownerMobile}" style="color: #3b82f6; text-decoration: none;">${farm.ownerMobile}</a>
+                </div>` : ''}
             </div>`;
 
-        L.marker([parseFloat(farm.latitude), parseFloat(farm.longitude)], { icon })
-            .bindPopup(popupContent)
-            .addTo(farmsLayer);
+        circle.bindPopup(popupContent, {
+            maxWidth: 320,
+            className: 'farm-popup-container'
+        });
+
+        // Add click handler to open sidebar
+        circle.on('click', () => openSidebar(farm));
+
+        circle.addTo(farmsLayer);
     });
+}
+
+function openSidebar(farm) {
+    const sidebar = document.getElementById('sidebar');
+    const details = document.getElementById('farmDetails');
+    
+    details.innerHTML = `
+        <div style="font-family: 'Inter', sans-serif;">
+            <div style="background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 20px;">
+                <h2 style="margin: 0; font-size: 24px; font-weight: 700;">${farm.name}</h2>
+                <p style="margin: 8px 0 0 0; opacity: 0.9;">${farm.type} Farm</p>
+            </div>
+            <div style="display: grid; grid-template-columns: 100px 1fr; gap: 12px; font-size: 14px;">
+                <span style="font-weight: 600; color: #374151;">Owner:</span>
+                <span style="color: #1e293b; font-weight: 500;">${farm.ownerName}</span>
+                
+                <span style="font-weight: 600; color: #374151;">Livestock:</span>
+                <span style="color: #ef4444; font-weight: 700; font-size: 18px;">${parseInt(farm.total_livestock).toLocaleString()} heads</span>
+                
+                <span style="font-weight: 600; color: #374151;">Status:</span>
+                <span style="color: ${farm.status === 'Approved' ? '#10b981' : '#f59e0b'}; font-weight: 600; font-size: 14px;">${farm.status}</span>
+                
+                <span style="font-weight: 600; color: #374151;">Address:</span>
+                <span style="color: #6b7280; font-size: 13px;">${farm.address}</span>
+            </div>
+        </div>
+    `;
+    
+    sidebar.style.display = 'block';
+    map.closePopup();
+}
+
+function closeSidebar() {
+    document.getElementById('sidebar').style.display = 'none';
 }
 
 function filterByDistrict(townName) {
