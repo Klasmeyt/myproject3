@@ -1332,6 +1332,48 @@ $eCertData = $stmt->fetchAll();
     .card { padding: 1rem; }
     .mobile-grid { grid-template-columns: 1fr; }
 }
+
+/* Add this to your existing <style> section */
+#farm-address[style*="GPS"] {
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+    border-color: #10b981;
+    font-style: italic;
+}
+
+#farm-address::placeholder {
+    color: #9ca3b8;
+}
+
+/* ✅ Form is ALWAYS editable after photo */
+#farm-livestock-form {
+    transition: opacity 0.3s ease !important;
+}
+
+#farm-livestock-form * {
+    pointer-events: auto !important;
+}
+
+/* GPS-filled address styling */
+#farm-address[value*="GPS"],
+#farm-address[value*="Lat"] {
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
+    border: 2px solid #10b981 !important;
+    font-style: italic;
+    position: relative;
+}
+
+#farm-address[value*="GPS"]::after {
+    content: "📍 GPS Auto-filled";
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.75rem;
+    color: #059669;
+    background: rgba(16,185,129,0.1);
+    padding: 2px 8px;
+    border-radius: 12px;
+}
     </style>
 </head>
 <body>
@@ -1373,7 +1415,7 @@ $eCertData = $stmt->fetchAll();
                 <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1);">
             </div>
 
-            <a href="logout.php" class="nav-item" style="color: #fbbf24;">
+            <a href="login.php" class="nav-item" style="color: #fbbf24;">
                 <i class="bi bi-box-arrow-right"></i> Logout
             </a>
         </nav>
@@ -1551,135 +1593,127 @@ $eCertData = $stmt->fetchAll();
             </section>
 
             <!-- Farm Registration - FIXED WITH PROPER DATABASE INTEGRATION -->
-<section id="farm-registration" class="page-section" style="display: none;">
-    <div class="card" style="max-width: 600px; margin: auto; overflow: hidden; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.08);">
-        <h2 class="card-title" style="font-size: 1.5rem; color: #1e293b; margin-bottom: 0.5rem;">Farm & Livestock Registration</h2>
-        <p style="color: #64748b; margin-bottom: 1.5rem; font-size: 0.9rem;">
-            📍 Take photo with GPS stamp → Register farm → Add livestock
-        </p>
 
-        <!-- Photo Capture Section -->
-        <div id="capture-section">
-            <div id="action-zone" style="display: flex; gap: 12px; margin-bottom: 1.5rem;">
+<!-- ✅ FIXED Farm Registration Section -->
+<section id="farm-registration" class="page-section" style="display: none; background-color: #f8fafc; min-height: 100vh; padding: 16px;">
+    <div class="registration-container" style="max-width: 480px; margin: auto; background: white; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); padding: 20px;">
+        
+        <header style="margin-bottom: 24px;">
+            <h2 style="font-size: 1.25rem; font-weight: 800; color: #0f172a; margin: 0;">Farm Registration</h2>
+            <p style="font-size: 0.85rem; color: #64748b; margin-top: 4px;">Complete the details below to register your livestock.</p>
+        </header>
+
+        <!-- ✅ FIXED: Farm Documentation Section -->
+        <div id="capture-section" style="margin-bottom: 24px;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; letter-spacing: 0.025em;">Farm Documentation</label>
+            <div id="action-zone" style="display: flex; gap: 10px;">
                 <button type="button" onclick="openCamera()" 
-                        style="flex: 1; background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; padding: 1.2rem; border-radius: 16px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 8px; transition: all 0.3s; box-shadow: 0 4px 15px rgba(16,185,129,0.3);">
-                    <i class="bi bi-camera-video" style="font-size: 1.8rem;"></i>
-                    <span style="font-size: 0.9rem;">Open Camera</span>
+                        style="flex: 1; background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; padding: 12px; border-radius: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.9rem; transition: all 0.2s;">
+                    <i class="bi bi-camera" style="font-size: 1.1rem;"></i> Camera
                 </button>
-                <button type="button" onclick="document.getElementById('file-upload').click()" 
-                        style="flex: 1; background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; border: none; padding: 1.2rem; border-radius: 16px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 8px; transition: all 0.3s; box-shadow: 0 4px 15px rgba(59,130,246,0.3);">
-                    <i class="bi bi-cloud-upload" style="font-size: 1.8rem;"></i>
-                    <span style="font-size: 0.9rem;">Upload Photo</span>
+                <!-- ✅ FIXED: Upload Button -->
+                <button type="button" id="upload-btn" onclick="document.getElementById('file-upload').click()" 
+                        style="flex: 1; background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; padding: 12px; border-radius: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.9rem; transition: all 0.2s;">
+                    <i class="bi bi-upload" style="font-size: 1.1rem;"></i> Upload
                 </button>
             </div>
-
-            <!-- Hidden file input -->
+            
+            <!-- ✅ FIXED: File Input (HIDDEN) -->
             <input type="file" id="file-upload" accept="image/*" style="display: none;" onchange="handleFileUpload(event)">
             
-            <!-- Photo Preview with GPS Stamp -->
-            <div id="photo-preview" style="display: none; position: relative; border-radius: 16px; overflow: hidden; margin-bottom: 1.5rem; border: 3px solid #10b981; box-shadow: 0 8px 25px rgba(16,185,129,0.2);">
-                <canvas id="stamped-canvas" style="width: 100%; height: auto; display: block; border-radius: 12px;"></canvas>
+            <!-- Photo Preview -->
+            <div id="photo-preview" style="display: none; position: relative; margin-top: 12px; border-radius: 12px; overflow: hidden; border: 2px solid #10b981; background: #f0fdf4;">
+                <canvas id="stamped-canvas" style="width: 100%; height: auto; display: block;"></canvas>
                 <button type="button" onclick="removePhoto()" 
-                        style="position: absolute; top: 12px; right: 12px; background: rgba(239, 68, 68, 0.95); color: white; border: none; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; font-weight: bold; font-size: 1.1rem; box-shadow: 0 2px 10px rgba(239,68,68,0.4); transition: all 0.2s;">✕</button>
+                        style="position: absolute; top: 8px; right: 8px; background: rgba(239,68,68,0.9); color: white; border: none; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 1rem; font-weight: bold; backdrop-filter: blur(8px);">✕</button>
             </div>
 
-            <!-- GPS Verification Box -->
-            <div id="gps-verification" style="display: none; background: linear-gradient(135deg, #f0fdf4, #dcfce7); padding: 1rem; border-radius: 12px; border: 2px solid #10b981; margin-bottom: 1.5rem;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.5rem;">
-                    <i class="bi bi-check-circle-fill" style="color: #10b981; font-size: 1.2rem;"></i>
-                    <label style="font-size: 0.8rem; color: #065f46; font-weight: 700; text-transform: uppercase;">GPS Verified</label>
+            <!-- ✅ GPS Verification -->
+            <div id="gps-verification" style="display: none; background: #ecfdf5; padding: 12px; border-radius: 12px; border: 2px solid #10b981; margin-top: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #065f46; font-weight: 600;">
+                    <i class="bi bi-geo-alt-fill" style="font-size: 1.1rem;"></i>
+                    <span id="gps-details">Getting GPS...</span>
+                    <span style="margin-left: auto; background: #10b981; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem;">✅ READY</span>
                 </div>
-                <div id="gps-details" style="font-size: 0.85rem; color: #047857; font-family: monospace; background: rgba(16,185,129,0.1); padding: 0.5rem; border-radius: 6px;"></div>
             </div>
         </div>
 
-        <!-- Registration Form (Locked until photo + GPS) -->
-        <form id="farm-livestock-form" style="opacity: 0.4; pointer-events: none; transition: all 0.4s ease;">
-            <input type="hidden" id="farm-lat" name="latitude">
-            <input type="hidden" id="farm-lng" name="longitude">
-            <input type="hidden" id="farm-photo" name="photo_data">
+        <!-- ✅ FIXED: Form (ALWAYS EDITABLE) -->
+        <form id="farm-livestock-form" style="transition: opacity 0.3s ease;">
+            
+            <!-- Hidden GPS fields -->
+            <input type="hidden" id="farm-lat" name="farm_lat">
+            <input type="hidden" id="farm-lng" name="farm_lng">
+            <input type="hidden" id="farm-photo" name="farm_photo">
 
-            <!-- Step 1: Farm Details -->
-            <div class="form-group">
-                <label class="form-label" style="font-weight: 700;">🏡 Farm Name</label>
-                <input type="text" id="farm-name" name="farm_name" class="form-input" placeholder="e.g. Green Valley Farm" required>
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; font-size: 0.85rem; font-weight: 600; color: #334155; margin-bottom: 6px;">Farm Name <span style="color: #10b981;">*</span></label>
+                <input type="text" id="farm-name" name="farm_name" class="form-input" placeholder="Enter farm name" required
+                       style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 1rem; outline: none; box-sizing: border-box;">
             </div>
 
-            <div class="form-group">
-                <label class="form-label" style="font-weight: 700;">📍 Farm Address</label>
-                <textarea id="farm-address" name="farm_address" class="form-input" rows="2" placeholder="Full address (auto-filled from GPS)" style="resize: vertical;" required></textarea>
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; font-size: 0.85rem; font-weight: 600; color: #334155; margin-bottom: 6px;">Farm Address <span style="color: #10b981;">*</span></label>
+                <textarea id="farm-address" name="farm_address" rows="2" placeholder="Address" required
+                          style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 1rem; resize: none; box-sizing: border-box;"></textarea>
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
-                <div class="form-group">
-                    <label class="form-label">🌾 Farm Type</label>
-                    <select id="farm-type" name="farm_type" class="form-input" required>
-                        <option value="">Select Type</option>
-                        <option value="Cattle">🐄 Cattle</option>
-                        <option value="Swine">🐷 Swine</option>
-                        <option value="Poultry">🐔 Poultry</option>
-                        <option value="Goat">🐐 Goat</option>
-                        <option value="Mixed">🌿 Mixed</option>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px;">
+                <div>
+                    <label style="display: block; font-size: 0.85rem; font-weight: 600; color: #334155; margin-bottom: 6px;">Farm Type <span style="color: #10b981;">*</span></label>
+                    <select id="farm-type" name="farm_type" required style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; background: white; height: 48px;">
+                        <option value="">Select...</option>
+                        <option value="Cattle">Cattle</option>
+                        <option value="Swine">Swine</option>
+                        <option value="Poultry">Poultry</option>
+                        <option value="Mixed">Mixed</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">📏 Area (Optional)</label>
-                    <input type="number" id="farm-area" name="farm_area" class="form-input" step="0.01" placeholder="e.g. 2.5" min="0">
+                <div>
+                    <label style="display: block; font-size: 0.85rem; font-weight: 600; color: #334155; margin-bottom: 6px;">Area (ha) <span style="color: #10b981;">*</span></label>
+                    <input type="number" id="farm-area" name="farm_area" placeholder="0.00" step="0.01" min="0" required
+                           style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 1rem; height: 48px; box-sizing: border-box;">
                 </div>
             </div>
 
-            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 2rem 0;">
-
-            <!-- Step 2: Livestock Details -->
-            <h4 style="font-size: 1.2rem; font-weight: 700; color: #1e293b; margin-bottom: 1rem;">🐄 Livestock Details</h4>
-
-            <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
-                <div class="form-group">
-                    <label class="form-label">Animal Type</label>
-                    <select id="livestock-type" name="livestock_type" class="form-input" required>
-                        <option value="">Select Type</option>
-                        <option value="Cattle">🐄 Cattle</option>
-                        <option value="Swine">🐷 Swine</option>
-                        <option value="Poultry">🐔 Poultry</option>
-                        <option value="Goat">🐐 Goat</option>
-                        <option value="Sheep">🐑 Sheep</option>
-                    </select>
+            <!-- Livestock Details -->
+            <div style="background: #f8fafc; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 24px;">
+                <h4 style="font-size: 0.9rem; font-weight: 700; color: #475569; margin: 0 0 12px 0; display: flex; align-items: center; gap: 6px;">
+                    <i class="bi bi-clipboard-data"></i> Livestock Details
+                </h4>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                    <div>
+                        <label style="display: block; font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">Animal <span style="color: #10b981;">*</span></label>
+                        <select id="livestock-type" name="livestock_type" required style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: white;">
+                            <option value="Cattle">Cattle</option>
+                            <option value="Swine">Swine</option>
+                            <option value="Poultry">Poultry</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">Heads <span style="color: #10b981;">*</span></label>
+                        <input type="number" id="livestock-qty" name="livestock_qty" value="1" min="1" required style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Heads</label>
-                    <input type="number" id="livestock-qty" name="livestock_qty" class="form-input" min="1" value="1" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Tag ID</label>
-                    <input type="text" id="livestock-tag" name="livestock_tag" class="form-input" placeholder="e.g. CAT-001" required>
+
+                <div>
+                    <label style="display: block; font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">Tag ID / Reference</label>
+                    <input type="text" id="livestock-tag" name="livestock_tag" placeholder="e.g. CAT-001" style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box;">
                 </div>
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem;">
-                <div class="form-group">
-                    <label class="form-label">Breed (Optional)</label>
-                    <input type="text" id="livestock-breed" name="livestock_breed" class="form-input" placeholder="e.g. Brahman">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Age (Years)</label>
-                    <input type="number" id="livestock-age" name="livestock_age" class="form-input" min="0" placeholder="0">
-                </div>
-            </div>
-
-            <!-- Submit Button -->
-            <button type="submit" id="submit-btn" class="btn btn-primary" 
-                    style="width: 100%; padding: 1.25rem; font-size: 1.1rem; background: linear-gradient(135deg, #10b981, #059669); border: none; border-radius: 16px; font-weight: 700; box-shadow: 0 6px 20px rgba(16,185,129,0.4);">
-                <i class="bi bi-check-lg"></i> ✅ Complete Registration
+            <!-- ✅ Submit Button -->
+            <button type="submit" id="submit-btn" 
+                    style="width: 100%; padding: 16px; background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; border-radius: 12px; font-size: 1rem; font-weight: 700; cursor: pointer; box-shadow: 0 10px 15px rgba(16,185,129,0.3); transition: all 0.3s;">
+                <i class="bi bi-check-lg"></i> Register Farm & Livestock
             </button>
         </form>
     </div>
 
     <!-- Success Message -->
-    <div id="success-message" style="display: none; max-width: 500px; margin: 2rem auto; padding: 2rem; background: linear-gradient(135deg, #10b981, #059669); color: white; border-radius: 20px; text-align: center; box-shadow: 0 10px 30px rgba(16,185,129,0.4);">
-        <i class="bi bi-check-circle-fill" style="font-size: 4rem; display: block; margin-bottom: 1rem;"></i>
-        <h3 style="font-size: 1.5rem; margin-bottom: 0.5rem;">Farm & Livestock Registered!</h3>
-        <p style="font-size: 1.1rem; opacity: 0.95;">Your farm is now pending approval. Check Dashboard for updates.</p>
-        <button type="button" onclick="resetForm()" class="btn" style="margin-top: 1.5rem; background: rgba(255,255,255,0.2); color: white; padding: 0.75rem 2rem; border: 2px solid rgba(255,255,255,0.3); border-radius: 12px; font-weight: 600;">Register Another</button>
+    <div id="success-message" style="display: none; position: fixed; bottom: 20px; left: 20px; right: 20px; background: #10b981; color: white; padding: 16px; border-radius: 12px; text-align: center; box-shadow: 0 20px 25px rgba(16,185,129,0.3); font-weight: 600;">
+        ✅ Farm Registered Successfully! Redirecting...
     </div>
 </section>
 
@@ -2203,253 +2237,188 @@ $eCertData = $stmt->fetchAll();
     </div>
     
     <script>
-        // DOM Ready
-        document.addEventListener('DOMContentLoaded', function() {
-            initNavigation();
-            initMobileMenu();
-            initAnimations();
-        });
+document.addEventListener('DOMContentLoaded', function() {
+    initAll();
+});
 
-        function initNavigation() {
-            const navItems = document.querySelectorAll('.nav-item[data-page]');
-            const pageSections = document.querySelectorAll('.page-section');
+function initAll() {
+    initNavigation();
+    initMobileMenu();
+    initAnimations();
+    initForms();
+    initModals();
+    initCameraSystem();
+}
 
-            navItems.forEach(item => {
-                item.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    const pageId = this.dataset.page;
-                    
-                    // Update active nav
-                    navItems.forEach(nav => nav.classList.remove('active'));
-                    this.classList.add('active');
-                    
-                    // Update page title
-                    document.getElementById('pageTitle').textContent = this.textContent.trim();
-                    
-                    // Show/hide sections
-                    pageSections.forEach(section => {
-                        section.style.display = section.id === pageId ? 'block' : 'none';
-                    });
-                    
-                    // Close mobile menu
-                    toggleMenu();
-                    
-                    // Scroll to top
-                    document.querySelector('.content').scrollIntoView({ behavior: 'smooth' });
-                });
-            });
-        }
+// ========================================
+// 1. NAVIGATION SYSTEM
+// ========================================
+function initNavigation() {
+    const navItems = document.querySelectorAll('.nav-item[data-page]');
+    const pageSections = document.querySelectorAll('.page-section');
+    const pageTitle = document.getElementById('pageTitle');
 
-        function toggleMenu() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.getElementById('overlay');
+    navItems.forEach(item => {
+        item.addEventListener('click', function(e) {
+            e.preventDefault();
+            const pageId = this.dataset.page;
             
-            sidebar.classList.toggle('active');
-            overlay.classList.toggle('show');
-        }
-
-        function initMobileMenu() {
-            // Close menu on outside click
-            document.getElementById('overlay').addEventListener('click', toggleMenu);
+            // Update active nav
+            navItems.forEach(nav => nav.classList.remove('active'));
+            this.classList.add('active');
             
-            // Close menu on escape key
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') {
-                    document.getElementById('sidebar').classList.remove('active');
-                    document.getElementById('overlay').classList.remove('show');
-                }
+            // Update page title
+            pageTitle.textContent = this.textContent.trim().replace(/\s*\d+$/, '');
+            
+            // Show/hide sections
+            pageSections.forEach(section => {
+                section.style.display = section.id === pageId ? 'block' : 'none';
             });
-        }
-
-        function initAnimations() {
-            // Form focus animations
-            document.querySelectorAll('.form-input, .form-select').forEach(input => {
-                input.addEventListener('focus', function() {
-                    this.style.transform = 'translateY(-2px)';
-                    this.style.boxShadow = '0 8px 25px rgba(16,185,129,0.15)';
-                });
-                
-                input.addEventListener('blur', function() {
-                    this.style.transform = 'translateY(0)';
-                    this.style.boxShadow = 'none';
-                });
-            });
-
-            // Table row hover
-            document.querySelectorAll('table tbody tr').forEach(row => {
-                row.addEventListener('click', function() {
-                    this.style.transform = 'scale(1.01)';
-                    this.style.transition = 'transform 0.2s ease';
-                    setTimeout(() => {
-                        this.style.transform = '';
-                    }, 200);
-                });
-            });
-
-            // Button hover effects
-            document.querySelectorAll('.btn').forEach(btn => {
-                btn.addEventListener('mouseenter', function() {
-                    this.style.transform = 'translateY(-2px)';
-                });
-                btn.addEventListener('mouseleave', function() {
-                    this.style.transform = 'translateY(0)';
-                });
-            });
-        }
-
-        // Prevent form submission for demo
-        document.querySelectorAll('form').forEach(form => {
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                alert('Form submission coming soon! This is a demo.');
-            });
+            
+            // Close mobile menu & scroll to top
+            toggleMenu();
+            setTimeout(() => {
+                document.querySelector('.content').scrollIntoView({ behavior: 'smooth' });
+            }, 300);
         });
+    });
+}
 
-        // Auto-hide success messages (if any)
-        setTimeout(() => {
-            const alerts = document.querySelectorAll('.alert-success');
-            alerts.forEach(alert => alert.remove());
-        }, 5000);
+// ========================================
+// 2. MOBILE MENU SYSTEM
+// ========================================
+function initMobileMenu() {
+    const overlay = document.getElementById('overlay');
+    overlay.addEventListener('click', toggleMenu);
+    
+    // ESC key closes menu
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeAllModals();
+            toggleMenu();
+        }
+    });
+}
 
-        function toggleModal(modalId) {
+function toggleMenu() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('overlay');
+    
+    sidebar.classList.toggle('active');
+    overlay.classList.toggle('show');
+}
+
+// ========================================
+// 3. MODAL SYSTEM (UNIFIED)
+// ========================================
+function initModals() {
+    // Close modals on outside click
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('custom-modal')) {
+            closeAllModals();
+        }
+    });
+}
+
+function toggleModal(modalId) {
     const modal = document.getElementById(modalId);
-    if (modal.style.display === "flex") {
-        modal.style.display = "none";
-        document.body.style.overflow = "auto"; // Re-enable scroll
+    if (!modal) return;
+    
+    if (modal.style.display === 'flex') {
+        closeModal(modalId);
     } else {
-        modal.style.display = "flex";
-        document.body.style.overflow = "hidden"; // Prevent background scroll
+        openModal(modalId);
     }
 }
 
-// Close modal when clicking outside of the content
-window.onclick = function(event) {
-    if (event.target.className === 'custom-modal') {
-        event.target.style.display = "none";
-        document.body.style.overflow = "auto";
+function openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
     }
 }
 
-//E-Certificate Page Navigation
-// E-Certificate Navigation & Functions
-function switchToFarms() {
-    document.querySelector('[data-page="farm-registration"]').click();
-    setTimeout(() => document.querySelector('.content').scrollIntoView({behavior: 'smooth'}), 100);
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.style.display = 'none';
+        document.body.style.overflow = 'auto';
+    }
 }
 
-function showCertificate(index) {
-    document.getElementById(`cert-modal-${index}`).style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-}
-
-function closeCertificate(index) {
-    document.getElementById(`cert-modal-${index}`).style.display = 'none';
+function closeAllModals() {
+    document.querySelectorAll('.custom-modal').forEach(modal => {
+        modal.style.display = 'none';
+    });
     document.body.style.overflow = 'auto';
 }
 
-function printCert(modalId) {
-    const printContent = document.querySelector(`#${modalId} .cert-print-area`).innerHTML;
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>DA Camarines Sur Certificate</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-            <style>
-                body { font-family: 'Georgia', serif; margin: 0; padding: 40px; background: white; }
-                .da-cs-green { color: #2c5530; }
-                /* Include all e_certificate.css styles here */
-                ${document.querySelector('style').innerHTML}
-            </style>
-        </head>
-        <body>${printContent}</body>
-        </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
+// ========================================
+// 4. FORM SYSTEM
+// ========================================
+function initForms() {
+    // Prevent default form submissions (demo mode)
+    document.querySelectorAll('form:not(#farm-livestock-form)').forEach(form => {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            showDemoAlert('Form submission coming soon!');
+        });
+    });
 }
 
-function shareCert(certId) {
-    const shareUrl = `${window.location.origin}${window.location.pathname}?view_cert=${certId}`;
-    if (navigator.share) {
-        navigator.share({ title: 'DA Camarines Sur Certificate', url: shareUrl });
-    } else {
-        navigator.clipboard.writeText(shareUrl);
-        alert('📋 Certificate link copied to clipboard!');
-    }
+// ========================================
+// 5. ANIMATION SYSTEM
+// ========================================
+function initAnimations() {
+    // Form focus animations
+    document.querySelectorAll('.form-input, .form-select, textarea').forEach(input => {
+        input.addEventListener('focus', function() {
+            this.parentElement.style.transform = 'translateY(-2px)';
+        });
+        input.addEventListener('blur', function() {
+            this.parentElement.style.transform = 'translateY(0)';
+        });
+    });
+
+    // Button hover effects
+    document.querySelectorAll('.btn').forEach(btn => {
+        btn.addEventListener('mouseenter', function() {
+            this.style.transform = 'translateY(-2px)';
+        });
+        btn.addEventListener('mouseleave', function() {
+            this.style.transform = 'translateY(0)';
+        });
+    });
+
+    // Table row interactions
+    document.querySelectorAll('table tbody tr').forEach(row => {
+        row.addEventListener('mouseenter', function() {
+            this.style.transform = 'scale(1.01)';
+        });
+        row.addEventListener('mouseleave', function() {
+            this.style.transform = 'scale(1)';
+        });
+    });
 }
 
-// Auto-close modals on outside click
-document.addEventListener('click', function(e) {
-    if (e.target.classList.contains('custom-modal')) {
-        e.target.style.display = 'none';
-        document.body.style.overflow = 'auto';
-    }
-});
-
-function printCert(certId) {
-    window.open('download_certificate.php?id=' + certId, '_blank');
-}
-
-function switchToFarms() {
-    // Your existing nav click
-    document.querySelector('[data-page="farm-registration"]').click();
-}
-
-document.getElementById('site-photo').addEventListener('change', function(e) {
-    const file = e.target.files[0];
-    const preview = document.getElementById('location-preview');
-    const status = document.getElementById('geo-status');
-    const addressField = document.getElementById('farm-address');
-
-    if (file) {
-        // 1. Show image preview
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            preview.innerHTML = `<img src="${event.target.result}">`;
-        }
-        reader.readAsDataURL(file);
-
-        // 2. Get Geolocation
-        status.innerHTML = "Fetching precise location...";
-        
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(async (position) => {
-                const lat = position.coords.latitude;
-                const lng = position.coords.longitude;
-                
-                // Store coords in hidden inputs
-                document.getElementById('lat-input').value = lat;
-                document.getElementById('lng-input').value = lng;
-
-                // 3. Reverse Geocode (Convert Lat/Lng to Address)
-                try {
-                    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
-                    const data = await response.json();
-                    
-                    // Auto-fill the address field
-                    addressField.value = data.display_name;
-                    status.innerHTML = `<i class="bi bi-check-circle-fill"></i> Location Verified: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-                } catch (error) {
-                    status.innerHTML = "Location saved, but address lookup failed.";
-                    addressField.value = `Lat: ${lat}, Lng: ${lng} (Manual entry required)`;
-                }
-            }, (err) => {
-                status.innerHTML = "Error: Please enable GPS permissions.";
-            });
-        }
-    }
-});
-
-// 🔥 BULLETPROOF CAMERA + GPS + DATABASE READY SYSTEM
+// ========================================
+// 6. CAMERA + GPS SYSTEM (BULLETPROOF)
+// ========================================
 let mediaStream = null;
 let currentGPS = null;
 let stampedCanvasData = null;
 
+function initCameraSystem() {
+    // File upload handler
+    const fileUpload = document.getElementById('file-upload');
+    if (fileUpload) {
+        fileUpload.addEventListener('change', handleFileUpload);
+    }
+}
+
 async function openCamera() {
     try {
-        // Prefer back camera on mobile
         const constraints = {
             video: { 
                 facingMode: 'environment',
@@ -2458,105 +2427,79 @@ async function openCamera() {
             }
         };
         
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        mediaStream = stream;
-        
-        // Fullscreen camera modal
-        const modal = document.createElement('div');
-        modal.id = 'camera-modal';
-        modal.style.cssText = `
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            background: #000; z-index: 9999; display: flex; flex-direction: column;
-            padding: 20px; box-sizing: border-box;
-        `;
-        
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        video.autoplay = true;
-        video.playsInline = true; // iOS fix
-        video.style.cssText = 'flex: 1; object-fit: cover; border-radius: 16px;';
-        
-        const controls = document.createElement('div');
-        controls.style.cssText = 'display: flex; gap: 15px; padding-top: 20px; justify-content: center;';
-        
-        // Capture button
-        const captureBtn = document.createElement('button');
-        captureBtn.innerHTML = '📸 <div style="font-size: 0.9rem; margin-top: 4px;">Capture Photo</div>';
-        captureBtn.style.cssText = `
-            background: linear-gradient(135deg, #10b981, #059669); 
-            color: white; border: none; border-radius: 50px; padding: 18px 32px; 
-            font-weight: 700; font-size: 1.1rem; cursor: pointer; box-shadow: 0 8px 25px rgba(16,185,129,0.4);
-            display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 140px;
-        `;
-        captureBtn.onclick = () => capturePhoto(video, modal);
-        
-        // Switch camera button (desktop)
-        const switchBtn = document.createElement('button');
-        switchBtn.innerHTML = '🔄';
-        switchBtn.style.cssText = `
-            background: rgba(255,255,255,0.2); color: white; border: none; 
-            border-radius: 50%; width: 56px; height: 56px; font-size: 1.3rem; 
-            cursor: pointer; backdrop-filter: blur(10px);
-        `;
-        switchBtn.onclick = () => switchCamera(stream, video);
-        
-        controls.appendChild(switchBtn);
-        controls.appendChild(captureBtn);
-        modal.appendChild(video);
-        modal.appendChild(controls);
-        document.body.appendChild(modal);
-        
-        // Auto-focus video
-        video.addEventListener('loadedmetadata', () => video.play());
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        showCameraModal(mediaStream);
         
     } catch (err) {
-        alert('Camera access denied. Please enable camera permissions.');
+        showAlert('Camera access denied. Please enable camera permissions.', 'error');
         console.error('Camera error:', err);
     }
 }
 
-async function capturePhoto(video, modal) {
+function showCameraModal(stream) {
+    const modal = document.createElement('div');
+    modal.id = 'camera-modal';
+    modal.className = 'custom-modal';
+    modal.innerHTML = `
+        <div class="modal-content" style="width: 95%; max-width: 600px; height: 85vh; border-radius: 20px; overflow: hidden;">
+            <div style="position: relative; flex: 1; background: #000;">
+                <video id="camera-video" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover;"></video>
+                <div id="gps-status-camera" style="position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.7); color: white; padding: 10px 15px; border-radius: 20px; font-size: 0.9rem; font-weight: 600;">
+                    Getting GPS...
+                </div>
+            </div>
+            <div style="padding: 20px; display: flex; gap: 15px; justify-content: center; background: #f8fafc;">
+                <button onclick="switchCamera()" style="width: 60px; height: 60px; border-radius: 50%; background: rgba(255,255,255,0.3); border: none; font-size: 1.5rem; cursor: pointer;">🔄</button>
+                <button onclick="capturePhotoFromModal()" style="width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); border: none; font-size: 2rem; color: white; cursor: pointer; box-shadow: 0 8px 25px rgba(16,185,129,0.4);">📸</button>
+                <button onclick="closeCameraModal()" style="width: 60px; height: 60px; border-radius: 50%; background: rgba(255,255,255,0.3); border: none; font-size: 1.5rem; cursor: pointer;">❌</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    openModal('camera-modal');
+    
+    const video = document.getElementById('camera-video');
+    video.srcObject = stream;
+    
+    // Get GPS for camera preview
+    getGPS().then(gps => {
+        document.getElementById('gps-status-camera').textContent = `GPS: ${gps.lat.toFixed(4)}, ${gps.lng.toFixed(4)}`;
+    });
+}
+
+async function capturePhotoFromModal() {
+    const video = document.getElementById('camera-video');
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    
-    // Wait for video dimensions
-    if (!video.videoWidth || !video.videoHeight) {
-        setTimeout(() => capturePhoto(video, modal), 100);
-        return;
-    }
     
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0);
     
-    // Get GPS first, then stamp
     const gps = await getGPS();
     await stampGPS(canvas, gps);
-    
-    // Process final image
     processFinalImage(canvas);
-    stopCamera();
-    modal.remove();
+    
+    closeCameraModal();
 }
 
-async function switchCamera(stream, video) {
-    const videoTrack = stream.getVideoTracks()[0];
-    if (videoTrack) {
-        await videoTrack.stop();
-    }
-    
+function closeCameraModal() {
+    stopCamera();
+    closeAllModals();
+    const modal = document.getElementById('camera-modal');
+    if (modal) modal.remove();
+}
+
+async function switchCamera() {
+    stopCamera();
     const constraints = {
-        video: { 
-            facingMode: { exact: videoTrack.getSettings().facingMode === 'environment' ? 'user' : 'environment' }
-        }
+        video: { facingMode: 'user' }
     };
-    
     try {
-        const newStream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = newStream;
-        mediaStream = newStream;
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        showCameraModal(stream);
     } catch (err) {
-        console.error('Camera switch failed:', err);
+        showCameraModal(mediaStream); // Fallback
     }
 }
 
@@ -2590,15 +2533,8 @@ async function getGPS() {
                     };
                     resolve(currentGPS);
                 },
-                () => {
-                    // Fallback coordinates (Manila)
-                    resolve({ lat: 14.5995, lng: 120.9842, accuracy: 1000 });
-                },
-                { 
-                    enableHighAccuracy: true, 
-                    timeout: 10000, 
-                    maximumAge: 60000 
-                }
+                () => resolve({ lat: 14.5995, lng: 120.9842, accuracy: 1000 }),
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
             );
         } else {
             resolve({ lat: 14.5995, lng: 120.9842, accuracy: 1000 });
@@ -2610,125 +2546,96 @@ async function stampGPS(canvas, gps) {
     const ctx = canvas.getContext('2d');
     const timestamp = new Date().toLocaleString('en-PH', { 
         timeZone: 'Asia/Manila',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
     });
     
-    // GPS Stamp Background
     const stampHeight = canvas.height * 0.18;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillRect(0, canvas.height - stampHeight, canvas.width, stampHeight);
     
-    // White text with shadow
     ctx.fillStyle = 'white';
     ctx.font = `bold ${Math.floor(canvas.width / 35)}px sans-serif`;
     ctx.shadowColor = 'rgba(0,0,0,0.8)';
-        ctx.shadowOffsetX = 2;
+    ctx.shadowOffsetX = 2;
     ctx.shadowOffsetY = 2;
+    ctx.shadowBlur = 4;
     
-    // GPS Coordinates
     ctx.textAlign = 'left';
     ctx.fillText(`📍 GPS: ${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)}`, 25, canvas.height - stampHeight + 45);
-    
-    // Timestamp
     ctx.fillText(`⏰ ${timestamp}`, 25, canvas.height - stampHeight + 85);
-    
-    // Accuracy badge
     ctx.font = `bold ${Math.floor(canvas.width / 60)}px sans-serif`;
     ctx.fillText(`✅ ${gps.accuracy < 20 ? 'High' : 'Good'} Accuracy`, 25, canvas.height - stampHeight + 125);
     
-    // Owner info
+    const userName = document.querySelector('.user-name')?.textContent || 'Farmer';
     ctx.font = `${Math.floor(canvas.width / 50)}px sans-serif`;
-    ctx.fillText(`👤 ${document.querySelector('.user-name').textContent}`, canvas.width - 300, canvas.height - stampHeight + 45);
+    ctx.fillText(`👤 ${userName}`, canvas.width - 300, canvas.height - stampHeight + 45);
     
-    ctx.shadowBlur = 0; // Reset shadow
+    ctx.shadowBlur = 0;
 }
 
-function processFinalImage(canvas) {
-    // Store canvas data for form submission
+// ✅ FIXED VERSION - Replace your existing processFinalImage function
+async function processFinalImage(canvas) {
     stampedCanvasData = canvas.toDataURL('image/jpeg', 0.9);
     
-    // Show preview
     const previewCanvas = document.getElementById('stamped-canvas');
     previewCanvas.width = 600;
     previewCanvas.height = Math.round(canvas.height * (600 / canvas.width));
     previewCanvas.getContext('2d').drawImage(canvas, 0, 0, 600, previewCanvas.height);
     
-    // Show UI sections
     document.getElementById('photo-preview').style.display = 'block';
     document.getElementById('gps-verification').style.display = 'block';
-    document.getElementById('capture-section').style.opacity = '0.7';
-    document.getElementById('capture-section').style.pointerEvents = 'none';
+    document.getElementById('gps-details').textContent = `Lat: ${currentGPS.lat.toFixed(6)}, Lng: ${currentGPS.lng.toFixed(6)}`;
     
-    // Unlock form
+    // ✅ FIXED: Store GPS data
+    if (document.getElementById('farm-lat')) document.getElementById('farm-lat').value = currentGPS.lat;
+    if (document.getElementById('farm-lng')) document.getElementById('farm-lng').value = currentGPS.lng;
+    
+    // 🌍 Auto-fill Farm Address with reverse geocoding
+    await reverseGeocodeAddress(currentGPS.lat, currentGPS.lng);
+    
+    // ✅ FIXED: FULLY UNLOCK FORM - Now you can type everywhere!
+    const form = document.getElementById('farm-livestock-form');
+    form.style.opacity = '1 !important';
+    form.style.pointerEvents = 'auto !important';
+    
+    // ✅ Visual confirmation
+    showAlert('✅ Photo & GPS captured! Form is ready - start typing!', 'success');
+    
+    // 🎯 Auto-focus Farm Name field
+    setTimeout(() => {
+        document.getElementById('farm-name').focus();
+    }, 500);
+}
+
+function removePhoto() {
+    // Hide photo preview
+    document.getElementById('photo-preview').style.display = 'none';
+    document.getElementById('gps-verification').style.display = 'none';
+    
+    // Clear all auto-filled data
+    const farmAddress = document.getElementById('farm-address');
+    const farmLat = document.getElementById('farm-lat');
+    const farmLng = document.getElementById('farm-lng');
+    const farmPhoto = document.getElementById('farm-photo');
+    
+    if (farmAddress) farmAddress.value = '';
+    if (farmLat) farmLat.value = '';
+    if (farmLng) farmLng.value = '';
+    if (farmPhoto) farmPhoto.value = '';
+    
+    // Reset form state (but keep it unlocked for manual entry)
     const form = document.getElementById('farm-livestock-form');
     form.style.opacity = '1';
     form.style.pointerEvents = 'auto';
     
-    // Fill GPS coordinates
-    document.getElementById('farm-lat').value = currentGPS.lat;
-    document.getElementById('farm-lng').value = currentGPS.lng;
-    document.getElementById('farm-photo').value = stampedCanvasData;
-    
-    // Reverse geocode for address
-    reverseGeocode(currentGPS.lat, currentGPS.lng);
-    
-    // Update GPS details display
-    document.getElementById('gps-details').textContent = 
-        `Lat: ${currentGPS.lat.toFixed(6)} | Lng: ${currentGPS.lng.toFixed(6)} | Accuracy: ${currentGPS.accuracy.toFixed(0)}m`;
-    
-    // Scroll to form
-    document.getElementById('farm-livestock-form').scrollIntoView({ behavior: 'smooth' });
-}
-
-async function reverseGeocode(lat, lng) {
-    try {
-        const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
-        );
-        const data = await response.json();
-        
-        const address = [
-            data.display_name || '',
-            data.address?.road || '',
-            data.address?.village || data.address?.suburb || '',
-            data.address?.municipality || data.address?.city || '',
-            data.address?.province || data.address?.state || ''
-        ].filter(Boolean).join(', ');
-        
-        document.getElementById('farm-address').value = address;
-    } catch (error) {
-        console.error('Geocoding failed:', error);
-        document.getElementById('farm-address').placeholder = 
-            `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)} (Manual address required)`;
-    }
-}
-
-function removePhoto() {
-    // Reset everything
-    document.getElementById('photo-preview').style.display = 'none';
-    document.getElementById('gps-verification').style.display = 'none';
-    document.getElementById('capture-section').style.opacity = '1';
-    document.getElementById('capture-section').style.pointerEvents = 'auto';
-    
-    const form = document.getElementById('farm-livestock-form');
-    form.style.opacity = '0.4';
-    form.style.pointerEvents = 'none';
-    
-    // Clear form data
-    document.getElementById('farm-lat').value = '';
-    document.getElementById('farm-lng').value = '';
-    document.getElementById('farm-photo').value = '';
     stampedCanvasData = null;
     currentGPS = null;
     
-    // Reset form fields
-    document.getElementById('farm-name').value = '';
-    document.getElementById('farm-address').value = '';
+    // Focus back to photo capture
+    setTimeout(() => {
+        document.querySelector('#action-zone button:first-child').focus();
+    }, 200);
 }
 
 function stopCamera() {
@@ -2738,24 +2645,54 @@ function stopCamera() {
     }
 }
 
-// Form Submission Handler
-document.getElementById('farm-livestock-form').addEventListener('submit', async function(e) {
+// 🌍 Auto-fill address from GPS (works offline too)
+async function reverseGeocodeAddress(lat, lng) {
+    const farmAddress = document.getElementById('farm-address');
+    if (!farmAddress) return;
+    
+    try {
+        // Try real reverse geocoding
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=en`);
+        const data = await response.json();
+        
+        if (data?.display_name) {
+            farmAddress.value = data.display_name;
+            farmAddress.style.background = '#ecfdf5';
+            farmAddress.style.borderColor = '#10b981';
+        }
+    } catch (e) {
+        // ✅ Offline fallback - precise coordinates
+        farmAddress.value = `Farm located at GPS: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        farmAddress.style.background = '#fef3c7';
+    }
+    
+    // Allow editing
+    farmAddress.readOnly = false;
+}
+
+// ========================================
+// 7. FARM REGISTRATION FORM HANDLER
+// ========================================
+if (document.getElementById('farm-livestock-form')) {
+    document.getElementById('farm-livestock-form').addEventListener('submit', handleFarmRegistration);
+}
+
+async function handleFarmRegistration(e) {
     e.preventDefault();
     
     if (!stampedCanvasData) {
-        alert('⚠️ Please take a photo with GPS first!');
+        showAlert('⚠️ Please take a photo with GPS first!', 'warning');
         return;
     }
     
-    const formData = new FormData(this);
-    formData.append('action', 'register_farm_livestock');
+    const formData = new FormData(e.target);
     formData.append('photo_data', stampedCanvasData);
     formData.append('user_id', <?= $userId ?>);
+    formData.append('action', 'register_farm_livestock');
     
-    // Show loading
     const submitBtn = document.getElementById('submit-btn');
     const originalText = submitBtn.innerHTML;
-    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving...';
     submitBtn.disabled = true;
     
     try {
@@ -2767,23 +2704,23 @@ document.getElementById('farm-livestock-form').addEventListener('submit', async 
         const result = await response.json();
         
         if (result.success) {
-            showSuccess();
-            resetForm();
+            showSuccess(result);
         } else {
-            alert('❌ Error: ' + (result.message || 'Registration failed'));
+            showAlert('❌ ' + (result.message || 'Registration failed'), 'error');
         }
     } catch (error) {
-        alert('❌ Network error. Please try again.');
+        showAlert('❌ Network error. Please try again.', 'error');
         console.error('Registration error:', error);
     } finally {
         submitBtn.innerHTML = originalText;
         submitBtn.disabled = false;
     }
-});
+}
 
-function showSuccess() {
+function showSuccess(result) {
+    const successMsg = document.getElementById('success-message');
+    successMsg.style.display = 'block';
     document.querySelector('#farm-registration .card').style.display = 'none';
-    document.getElementById('success-message').style.display = 'block';
 }
 
 function resetForm() {
@@ -2793,54 +2730,147 @@ function resetForm() {
     document.getElementById('farm-livestock-form').reset();
 }
 
-// Clean up on page unload
-window.addEventListener('beforeunload', () => {
+// ========================================
+// 8. E-CERTIFICATE FUNCTIONS
+// ========================================
+function switchToFarms() {
+    document.querySelector('[data-page="farm-registration"]').click();
+}
+
+function printCert(certId) {
+    window.open(`download_certificate.php?id=${certId}`, '_blank');
+}
+
+// ========================================
+// 9. REJECTION HANDLING
+// ========================================
+function showRejection(reason) {
+    document.getElementById('rejectionReason').textContent = reason;
+    openModal('rejectionModal');
+}
+
+async function appealFarm(farmId) {
+    if (!confirm('Appeal this rejected farm? You can edit and resubmit.')) return;
+    
+    try {
+        const response = await fetch('api/appeal-farm.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ farmId })
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('✅ Appeal submitted! Admin will review.', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showAlert('❌ ' + result.message, 'error');
+        }
+    } catch (error) {
+        showAlert('Network error', 'error');
+    }
+}
+
+function appealRejectedFarm() {
+    closeModal('rejectionModal');
+    switchToFarms();
+}
+
+// ========================================
+// 10. UTILITY FUNCTIONS
+// ========================================
+function showAlert(message, type = 'info') {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.style.cssText = `
+        position: fixed; top: 20px; right: 20px; z-index: 10000;
+        padding: 1rem 1.5rem; border-radius: 12px; color: white;
+        font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#3b82f6'};
+        transform: translateX(400px); transition: all 0.3s ease;
+    `;
+    alertDiv.textContent = message;
+    
+    document.body.appendChild(alertDiv);
+    
+        setTimeout(() => {
+        alertDiv.style.transform = 'translateX(400px)';
+    }, 100);
+
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 4000);
+}
+
+// ========================================
+// 11. CLEANUP & LIFECYCLE
+// ========================================
+window.addEventListener('beforeunload', function() {
     stopCamera();
+    closeAllModals();
 });
 
-// Prevent memory leaks
-document.addEventListener('visibilitychange', () => {
+document.addEventListener('visibilitychange', function() {
     if (document.hidden) {
         stopCamera();
     }
 });
 
-
-
-// Rejection Modal Functions
-function showRejection(reason) {
-    document.getElementById('rejectionReason').textContent = reason;
-    toggleModal('rejectionModal');
-}
-
-async function appealFarm(farmId) {
-    if (confirm('Appeal this rejected farm? You can edit and resubmit.')) {
-        // Mark as appeal (for admin review)
-        try {
-            const response = await fetch('api/appeal-farm.php', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({farmId})
-            });
-            const result = await response.json();
-            
-            if (result.success) {
-                alert('✅ Appeal submitted! Admin will review.');
-                location.reload();
-            } else {
-                alert('❌ ' + result.message);
-            }
-        } catch (error) {
-            alert('Network error');
-        }
+// ========================================
+// 12. PROFILE MODAL HANDLER
+// ========================================
+document.addEventListener('DOMContentLoaded', function() {
+    // Profile form handler
+    const profileForm = document.querySelector('#profileModal form');
+    if (profileForm) {
+        profileForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            showAlert('Profile updated successfully! (Demo mode)', 'success');
+            closeModal('profileModal');
+        });
     }
+
+    // Profile photo upload
+    const profilePhotoInput = document.getElementById('profile_pix_input');
+    if (profilePhotoInput) {
+        profilePhotoInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const img = document.querySelector('#profileModal img');
+                    if (img) {
+                        img.src = event.target.result;
+                        img.style.display = 'block';
+                    }
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+    }
+});
+
+// ========================================
+// 13. DEMO ALERTS & FALLBACKS
+// ========================================
+function showDemoAlert(message) {
+    showAlert(message + ' 🚀', 'info');
 }
 
-function appealRejectedFarm() {
-    toggleModal('rejectionModal');
-    // Redirect to farm registration with appeal mode
-    document.querySelector('[data-page="farm-registration"]').click();
-}
-    </script>
+// Legacy function support (for existing onclick handlers)
+window.showRejection = showRejection;
+window.appealFarm = appealFarm;
+window.appealRejectedFarm = appealRejectedFarm;
+window.switchToFarms = switchToFarms;
+window.printCert = printCert;
+window.toggleModal = toggleModal;
+window.openCamera = openCamera;
+window.removePhoto = removePhoto;
+window.resetForm = resetForm;
+
+console.log('✅ AgriTrace+ Farmer Portal - All systems initialized successfully!');
+</script>
 </body>
 </html>
