@@ -54,18 +54,59 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         echo json_encode(['success'=>true,'message'=>'Incident resolved.']); exit;
     }
 
-    // PROFILE UPDATE
+    // PROFILE UPDATE WITH IMAGE SUPPORT (REPLACED OLD VERSION)
     if (isset($_POST['update_profile'])) {
         try {
+            $firstName = trim($_POST['firstName']);
+            $lastName = trim($_POST['lastName']);
+            $email = trim($_POST['email']);
+            $mobile = $_POST['mobile'] ?? '';
+            
+            // Handle profile image upload
+            $profileImage = $_POST['existing_image'] ?? '';
+            if (isset($_FILES['profile_image']) && $_FILES['profile_image']['error'] === UPLOAD_ERR_OK) {
+                $uploadDir = 'uploads/profiles/';
+                if (!is_dir($uploadDir)) {
+                    mkdir($uploadDir, 0755, true);
+                }
+                
+                $fileName = $user_id . '_' . time() . '_' . basename($_FILES['profile_image']['name']);
+                $filePath = $uploadDir . $fileName;
+                $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+                
+                if (in_array($_FILES['profile_image']['type'], $allowedTypes) && $_FILES['profile_image']['size'] <= 2 * 1024 * 1024) {
+                    if (move_uploaded_file($_FILES['profile_image']['tmp_name'], $filePath)) {
+                        $profileImage = $filePath;
+                        // Delete old image if exists
+                        $oldImage = $pdo->prepare("SELECT profile_image FROM officer_profiles WHERE user_id=?");
+                        $oldImage->execute([$user_id]);
+                        $oldImg = $oldImage->fetchColumn();
+                        if ($oldImg && file_exists($oldImg) && $oldImg !== $profileImage) {
+                            unlink($oldImg);
+                        }
+                    }
+                }
+            }
+            
+            // Update user basic info
             $pdo->prepare("UPDATE users SET firstName=?,lastName=?,email=?,mobile=? WHERE id=?")
-                ->execute([$_POST['firstName'],$_POST['lastName'],$_POST['email'],$_POST['mobile']??'',$user_id]);
-            $pdo->prepare("INSERT INTO officer_profiles(user_id,gov_id,department,position,office,assigned_region,province,municipality)
-                VALUES(?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE gov_id=VALUES(gov_id),department=VALUES(department),
-                position=VALUES(position),office=VALUES(office),assigned_region=VALUES(assigned_region),
-                province=VALUES(province),municipality=VALUES(municipality)")
-                ->execute([$user_id,$_POST['gov_id']??'',$_POST['department']??'',$_POST['position']??'',$_POST['office']??'',$_POST['assigned_region']??'',$_POST['province']??'',$_POST['municipality']??'']);
-            echo json_encode(['success'=>true,'message'=>'Profile updated!']); exit;
-        } catch(Exception $e){ echo json_encode(['success'=>false,'message'=>$e->getMessage()]); exit; }
+                ->execute([$firstName, $lastName, $email, $mobile, $user_id]);
+            
+            // Update officer profile (including image)
+            $pdo->prepare("INSERT INTO officer_profiles(user_id,gov_id,department,position,office,assigned_region,province,municipality,profile_image)
+                VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE 
+                gov_id=VALUES(gov_id),department=VALUES(department),position=VALUES(position),
+                office=VALUES(office),assigned_region=VALUES(assigned_region),province=VALUES(province),
+                municipality=VALUES(municipality),profile_image=VALUES(profile_image)")
+                ->execute([$user_id, $_POST['gov_id']??'', $_POST['department']??'', $_POST['position']??'', 
+                          $_POST['office']??'', $_POST['assigned_region']??'', $_POST['province']??'', 
+                          $_POST['municipality']??'', $profileImage]);
+            
+            echo json_encode(['success'=>true,'message'=>'Profile updated!','profile_image'=>$profileImage]); 
+        } catch(Exception $e){ 
+            echo json_encode(['success'=>false,'message'=>$e->getMessage()]); 
+        }
+        exit;
     }
 }
 
@@ -90,10 +131,17 @@ $all_incidents=$s->fetchAll();
 $s=$pdo->query("SELECT * FROM public_reports ORDER BY createdAt DESC LIMIT 20");
 $public_reports=$s->fetchAll();
 
-$s=$pdo->prepare("SELECT u.*,p.gov_id,p.department,p.position,p.office,p.assigned_region,p.municipality,p.province FROM users u LEFT JOIN officer_profiles p ON u.id=p.user_id WHERE u.id=?");
-$s->execute([$user_id]); $user_profile=$s->fetch();
-if(!$user_profile) $user_profile=[];
+// FIXED USER PROFILE QUERY (SINGLE QUERY, NO DUPLICATES)
+$s = $pdo->prepare("SELECT u.*,p.gov_id,p.department,p.position,p.office,p.assigned_region,p.municipality,p.province,p.profile_image 
+                    FROM users u 
+                    LEFT JOIN officer_profiles p ON u.id=p.user_id 
+                    WHERE u.id=?");
+$s->execute([$user_id]); 
+$user_profile = $s->fetch();
+if(!$user_profile) $user_profile = [];
 $user_profile['mobile'] = $user_profile['mobile'] ?? '';
+$user_profile['profile_image'] = $user_profile['profile_image'] ?? '';
+
 $user_name  = trim(($user_profile['firstName']??'').' '.($user_profile['lastName']??''));
 $user_initial = strtoupper(substr($user_name,0,1));
 $user_role_label = $user_role;
@@ -208,6 +256,14 @@ tr:hover{background:#F8FAFC;}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(min-width:1024px){.sidebar{left:0;}.main-content{margin-left:var(--sw);}.menu-btn{display:none;}.overlay{display:none!important;}}
 @media(max-width:600px){.stats-grid{grid-template-columns:repeat(2,1fr);}.chart-grid{grid-template-columns:1fr;}.form-row{grid-template-columns:1fr;}}
+.profile-avatar img { display: block; }
+.profile-camera:hover { background: #059669; transform: scale(1.05); }
+.profile-camera input[type=file]:hover { cursor: pointer; }
+#modalProfilePreview:hover { border-color: var(--brand-acc); }
+.profile-avatar img { display: block; }
+.profile-camera:hover { background: #059669 !important; transform: scale(1.05); }
+.profile-camera input[type=file] { cursor: pointer; }
+#modalProfilePreview:hover { border-color: var(--brand-acc); }
 </style>
 </head>
 <body>
@@ -458,70 +514,106 @@ tr:hover{background:#F8FAFC;}
   </section>
 
   <!-- ═══ PROFILE ═══ -->
-  <section id="sec-profile" class="section">
-    <div style="max-width:700px;margin:0 auto;">
-      <div class="card" style="background:linear-gradient(135deg,var(--brand-dark),var(--brand-mid));color:#fff;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;margin-bottom:24px;padding:2rem;">
-        <div style="width:90px;height:90px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:2.25rem;font-weight:800;border:4px solid rgba(255,255,255,.3);flex-shrink:0;"><?= htmlspecialchars($user_initial) ?></div>
-        <div style="flex:1;">
-          <span style="background:rgba(255,255,255,.2);padding:.3rem .875rem;border-radius:20px;font-size:.8rem;font-weight:700;text-transform:uppercase;"><?= htmlspecialchars($user_role) ?></span>
-          <h2 style="font-size:1.75rem;font-weight:800;margin:.5rem 0;"><?= htmlspecialchars($user_name) ?></h2>
-          <p style="opacity:.85;font-size:.9rem;"><?= htmlspecialchars($user_profile['email']??'') ?></p>
-        </div>
-        <button class="btn" style="background:rgba(255,255,255,.2);color:#fff;border:2px solid rgba(255,255,255,.4);" onclick="openModal('profileModal')"><i class="bi bi-pencil-square"></i> Edit</button>
+<section id="sec-profile" class="section">
+  <div style="max-width:700px;margin:0 auto;">
+    
+    <!-- UPDATED PROFILE HEADER WITH IMAGE UPLOAD -->
+   <div class="card" style="background:linear-gradient(135deg,var(--brand-dark),var(--brand-mid));color:#fff;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;margin-bottom:24px;padding:2rem;" id="profileHeader">
+  <div class="profile-avatar" id="profileAvatar" style="width:90px;height:90px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:2.25rem;font-weight:800;border:4px solid rgba(255,255,255,.3);flex-shrink:0;position:relative;overflow:hidden;">
+    <?php if($user_profile['profile_image'] && file_exists($user_profile['profile_image'])): ?>
+      <img src="<?= htmlspecialchars($user_profile['profile_image']) ?>" alt="Profile" style="width:100%;height:100%;object-fit:cover;">
+    <?php else: ?>
+      <span style="position:relative;z-index:2;"><?= htmlspecialchars($user_initial) ?></span>
+    <?php endif; ?>
+  </div>
+  <div style="flex:1;">
+    <span style="background:rgba(255,255,255,.2);padding:.3rem .875rem;border-radius:20px;font-size:.8rem;font-weight:700;text-transform:uppercase;"><?= htmlspecialchars($user_role) ?></span>
+    <h2 style="font-size:1.75rem;font-weight:800;margin:.5rem 0;"><?= htmlspecialchars($user_name) ?></h2>
+    <p style="opacity:.85;font-size:.9rem;"><?= htmlspecialchars($user_profile['email']??'') ?></p>
+  </div>
+  <button class="btn" style="background:rgba(255,255,255,.2);color:#fff;border:2px solid rgba(255,255,255,.4);" onclick="openModal('profileModal')"><i class="bi bi-pencil-square"></i> Edit</button>
+</div>
+
+    <!-- REST OF PROFILE CARDS (UNCHANGED) -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="card"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-person" style="color:var(--brand-acc);"></i> Personal</h4>
+        <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Email</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['email']??'—') ?></span></div>
+        <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Mobile</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['mobile']??'—') ?></span></div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-        <div class="card"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-person" style="color:var(--brand-acc);"></i> Personal</h4>
-          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Email</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['email']??'—') ?></span></div>
-          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Mobile</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['mobile']??'—') ?></span></div>
-        </div>
-        <div class="card"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-briefcase" style="color:#3b82f6;"></i> Work</h4>
-          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Dept</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['department']??'—') ?></span></div>
-          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Position</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['position']??'—') ?></span></div>
-          <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Office</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['office']??'—') ?></span></div>
-        </div>
-        <div class="card" style="grid-column:1/-1;"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-geo-alt" style="color:var(--danger);"></i> Assignment</h4>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem;">
-            <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Region</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['assigned_region']??'—') ?></span></div>
-            <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Province</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['province']??'—') ?></span></div>
-            <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Municipality</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['municipality']??'—') ?></span></div>
-          </div>
+      <div class="card"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-briefcase" style="color:#3b82f6;"></i> Work</h4>
+        <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Dept</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['department']??'—') ?></span></div>
+        <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Position</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['position']??'—') ?></span></div>
+        <div class="info-row"><span style="color:var(--sub);font-size:.875rem;">Office</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['office']??'—') ?></span></div>
+      </div>
+      <div class="card" style="grid-column:1/-1;"><h4 style="margin-bottom:1rem;font-size:1rem;"><i class="bi bi-geo-alt" style="color:var(--danger);"></i> Address</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem;">
+          <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Region</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['assigned_region']??'—') ?></span></div>
+          <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Province</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['province']??'—') ?></span></div>
+          <div class="info-row" style="flex-direction:column;"><span style="color:var(--sub);font-size:.8rem;">Municipality</span><span style="font-weight:600;font-size:.875rem;"><?= htmlspecialchars($user_profile['municipality']??'—') ?></span></div>
         </div>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
 </main>
 
 <!-- ═══ PROFILE MODAL ═══ -->
 <div id="profileModal" class="modal-bg">
-  <div class="modal-box">
-    <div class="modal-hdr"><h3><i class="bi bi-person-gear"></i> Edit Profile</h3><button class="modal-close" onclick="closeModal('profileModal')">×</button></div>
-    <form id="profileForm" method="POST">
+  <div class="modal-box" style="max-width: 600px;">
+    <div class="modal-hdr">
+      <h3><i class="bi bi-person-gear"></i> Edit Profile</h3>
+      <button class="modal-close" onclick="closeModal('profileModal')">×</button>
+    </div>
+    
+    <form id="profileForm" method="POST" enctype="multipart/form-data">
       <input type="hidden" name="update_profile" value="1">
+      
       <div class="modal-body">
+        <div style="text-align:center; padding-bottom: 1.5rem; border-bottom: 1px solid var(--slate-200); margin-bottom: 1.5rem;">
+          <div id="modalProfilePreview" style="width:110px; height:110px; border-radius:50%; background:var(--slate-100); margin:0 auto 12px; display:flex; align-items:center; justify-content:center; font-size:2rem; font-weight:700; border:4px solid #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow:hidden;">
+            <?php if($user_profile['profile_image'] && file_exists($user_profile['profile_image'])): ?>
+              <img src="<?= htmlspecialchars($user_profile['profile_image']) ?>" id="modalProfileImg" style="width:100%; height:100%; object-fit:cover;">
+            <?php else: ?>
+              <span style="color: var(--brand-mid);"><?= htmlspecialchars($user_initial) ?></span>
+            <?php endif; ?>
+          </div>
+          <label for="modalProfileImage" style="cursor:pointer; color:var(--brand-mid); font-weight:700; font-size:.85rem; display:inline-block; border: 1px solid var(--brand-mid); padding: 5px 15px; border-radius: 20px; transition: all 0.2s;">
+            <i class="bi bi-camera-fill"></i> Change Photo
+          </label>
+          <input type="file" id="modalProfileImage" name="profile_image" accept="image/*" style="display:none;" onchange="previewImage(this)">
+          <div style="color:var(--sub); font-size:.7rem; margin-top: 5px;">JPG, PNG or WebP • Max 2MB</div>
+        </div>
+
         <div class="form-row">
           <div class="form-group"><label class="form-label">First Name</label><input class="form-input" type="text" name="firstName" value="<?= htmlspecialchars($user_profile['firstName']??'') ?>"></div>
           <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" type="text" name="lastName" value="<?= htmlspecialchars($user_profile['lastName']??'') ?>"></div>
         </div>
+        
         <div class="form-row">
           <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" name="email" value="<?= htmlspecialchars($user_profile['email']??'') ?>"></div>
           <div class="form-group"><label class="form-label">Mobile</label><input class="form-input" type="tel" name="mobile" value="<?= htmlspecialchars($user_profile['mobile']??'') ?>"></div>
         </div>
+
         <div class="form-row">
-          <div class="form-group"><label class="form-label">Gov't ID</label><input class="form-input" type="text" name="gov_id" value="<?= htmlspecialchars($user_profile['gov_id']??'') ?>"></div>
           <div class="form-group"><label class="form-label">Department</label><input class="form-input" type="text" name="department" value="<?= htmlspecialchars($user_profile['department']??'') ?>"></div>
-        </div>
-        <div class="form-row">
           <div class="form-group"><label class="form-label">Position</label><input class="form-input" type="text" name="position" value="<?= htmlspecialchars($user_profile['position']??'') ?>"></div>
-          <div class="form-group"><label class="form-label">Office</label><input class="form-input" type="text" name="office" value="<?= htmlspecialchars($user_profile['office']??'') ?>"></div>
         </div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Region</label><input class="form-input" type="text" name="assigned_region" value="<?= htmlspecialchars($user_profile['assigned_region']??'') ?>"></div>
-          <div class="form-group"><label class="form-label">Province</label><input class="form-input" type="text" name="province" value="<?= htmlspecialchars($user_profile['province']??'') ?>"></div>
+
+        <div style="background: var(--slate-50); padding: 1rem; border-radius: 8px; margin-top: 10px;">
+            <p style="font-size: 0.75rem; font-weight: 700; color: var(--sub); text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.5px;">Location Assignment</p>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">Region</label><input class="form-input" type="text" name="assigned_region" value="<?= htmlspecialchars($user_profile['assigned_region']??'') ?>"></div>
+              <div class="form-group"><label class="form-label">Province</label><input class="form-input" type="text" name="province" value="<?= htmlspecialchars($user_profile['province']??'') ?>"></div>
+            </div>
+            <div class="form-group"><label class="form-label">Municipality</label><input class="form-input" type="text" name="municipality" value="<?= htmlspecialchars($user_profile['municipality']??'') ?>"></div>
         </div>
-        <div class="form-group"><label class="form-label">Municipality</label><input class="form-input" type="text" name="municipality" value="<?= htmlspecialchars($user_profile['municipality']??'') ?>"></div>
       </div>
-      <div class="modal-footer"><button type="button" class="btn btn-secondary" onclick="closeModal('profileModal')">Cancel</button><button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save</button></div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" style="background:#eee; color:#444;" onclick="closeModal('profileModal')">Cancel</button>
+        <button type="submit" class="btn btn-primary" style="padding: 0.6rem 2rem;"><i class="bi bi-save"></i> Save Changes</button>
+      </div>
     </form>
   </div>
 </div>
@@ -625,6 +717,110 @@ document.getElementById('profileForm').addEventListener('submit', async e=>{
         else showToast(d.message,'error');
     } catch{showToast('Network error','error');}
     btn.disabled=false;
+});
+
+// ── Profile Image Handling ────────────────────────────────────────────────────
+function updateProfileAvatar(imageUrl) {
+    const avatar = document.getElementById('profileAvatar');
+    const img = avatar.querySelector('img');
+    
+    if (imageUrl) {
+        if (img) {
+            img.src = imageUrl;
+        } else {
+            const newImg = document.createElement('img');
+            newImg.src = imageUrl;
+            newImg.alt = 'Profile';
+            newImg.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+            avatar.innerHTML = '';
+            avatar.appendChild(newImg);
+            // Keep camera overlay
+            const camera = document.querySelector('.profile-camera');
+            if (camera) avatar.appendChild(camera);
+        }
+    } else {
+        // Fallback to initials
+        const initials = '<?= htmlspecialchars($user_initial) ?>';
+        avatar.innerHTML = `
+            <span style="position:relative;z-index:2;font-size:2.25rem;font-weight:800;">${initials}</span>
+            <label for="profileImageInput" class="profile-camera" style="position:absolute;bottom:8px;right:8px;width:28px;height:28px;background:var(--brand-acc);border-radius:50%;display:flex;align-items:center;justify-content:center;border:3px solid rgba(255,255,255,.9);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);">
+                <i class="bi bi-camera" style="font-size:1rem;color:#fff;"></i>
+            </label>
+            <input type="file" id="profileImageInput" name="profile_image" accept="image/*" style="display:none;">
+        `;
+        attachProfileImageHandlers();
+    }
+}
+
+// Attach image upload handlers
+function attachProfileImageHandlers() {
+    // Main profile image
+    document.getElementById('profileImageInput').addEventListener('change', handleProfileImageUpload);
+    
+    // Modal profile image
+    document.getElementById('modalProfileImage').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('modalProfileImg') ? 
+                    document.getElementById('modalProfileImg').src = e.target.result :
+                    document.getElementById('modalProfilePreview').innerHTML = `<img id="modalProfileImg" src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">`;
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+}
+
+function handleProfileImageUpload(e) {
+    const file = e.target.files[0];
+    if (file && file.size <= 2 * 1024 * 1024) { // 2MB limit
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            // Temporary preview
+            const avatar = document.getElementById('profileAvatar');
+            const img = avatar.querySelector('img');
+            if (img) img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    } else {
+        showToast('Please select an image under 2MB', 'error');
+        e.target.value = '';
+    }
+}
+
+// Initialize image handlers on page load
+document.addEventListener('DOMContentLoaded', function() {
+    attachProfileImageHandlers();
+    
+    // Update profile form success handler
+    const originalProfileSubmit = document.getElementById('profileForm').onsubmit;
+    document.getElementById('profileForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('[type=submit]');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving...';
+        
+        const fd = new FormData(e.target);
+        try {
+            const r = await fetch('', {method: 'POST', body: fd});
+            const d = await r.json();
+            if (d.success) {
+                showToast('Profile updated!', 'success');
+                if (d.profile_image) {
+                    updateProfileAvatar(d.profile_image);
+                }
+                closeModal('profileModal');
+                setTimeout(() => location.reload(), 1200);
+            } else {
+                showToast(d.message, 'error');
+            }
+        } catch {
+            showToast('Network error', 'error');
+        }
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-save"></i> Save';
+    });
 });
 
 // ── Leaflet Map ───────────────────────────────────────────────────────────────
