@@ -1,30 +1,141 @@
 <?php
 session_start();
+require_once __DIR__ . '/config/db.php';
 
-// AUTHENTICATION CHECK
-if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
+// ── Authentication & Authorization ─────────────────────────────────────────────
+if (!isLoggedIn()) {
     header('Location: login.php?redirect=' . urlencode($_SERVER['PHP_SELF']));
     exit;
 }
 
-// FIXED: Define user_name and other variables properly
-$user_name = $_SESSION['user_name'] ?? 'Admin';
-$user_role = $_SESSION['user_role'] ?? 'Administrator';
-$user_initial = strtoupper(substr($_SESSION['user_name'] ?? 'A', 0, 1));
-$current_date = date('M d, Y');
-
-// ROLE CHECK
-$allowed_roles = match(basename($_SERVER['PHP_SELF'])) {
-    'admin.php' => ['Admin'],
-    'farmer.php' => ['Farmer'],
-    'agri.php' => ['Agriculture Official'],
-    default => []
-};
-
-if (!in_array($user_role, $allowed_roles)) {
-    header('Location: index.php?error=access_denied');
+if (currentUserRole() !== 'Admin') {
+    header('Location: login.php?error=access_denied');
     exit;
 }
+
+// ── User Data ──────────────────────────────────────────────────────────────────
+$user_id     = currentUserId();
+$user_role   = currentUserRole();
+$user_name   = $_SESSION['firstName'] ?? 'Admin';
+$user_email  = $_SESSION['email'] ?? '';
+$user_initial= strtoupper(substr($user_name, 0, 1));
+$current_date= date('M d, Y');
+
+// ── Database ───────────────────────────────────────────────────────────────────
+try {
+    $pdo = getPDO();
+} catch(PDOException $e) {
+    error_log('Admin DB Error: ' . $e->getMessage());
+    die('Database connection failed. Check XAMPP MySQL.');
+}
+
+// ── Handle AJAX from admin panel ───────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json');
+    $action = $_POST['action'] ?? '';
+
+    // Approve farm
+    if ($action === 'approve_farm') {
+        $farmId = (int)($_POST['farm_id'] ?? 0);
+        $stmt = $pdo->prepare("SELECT name,status FROM farms WHERE id=?");
+        $stmt->execute([$farmId]); $farm = $stmt->fetch();
+        if (!$farm) { echo json_encode(['success'=>false,'message'=>'Farm not found']); exit; }
+        if ($farm['status'] !== 'Pending') { echo json_encode(['success'=>false,'message'=>"Farm already {$farm['status']}"]); exit; }
+        $pdo->prepare("UPDATE farms SET status='Approved',updatedAt=NOW() WHERE id=?")->execute([$farmId]);
+        $pdo->prepare("INSERT INTO audit_log(userId,action,tableName,recordId,details,ipAddress) VALUES(?,?,?,?,?,?)")
+            ->execute([$_SESSION['user_id'],'APPROVE_FARM','farms',$farmId,json_encode(['farm_name'=>$farm['name']]),$_SERVER['REMOTE_ADDR']??'']);
+        echo json_encode(['success'=>true,'message'=>"Farm '{$farm['name']}' approved!",'new_status'=>'Approved','farm_id'=>$farmId]);
+        exit;
+    }
+
+    // Reject farm
+    if ($action === 'reject_farm') {
+        $farmId = (int)($_POST['farm_id'] ?? 0);
+        $reason = trim($_POST['reason'] ?? '');
+        if (!$reason) { echo json_encode(['success'=>false,'message'=>'Reason required']); exit; }
+        $stmt = $pdo->prepare("SELECT name,status FROM farms WHERE id=?");
+        $stmt->execute([$farmId]); $farm = $stmt->fetch();
+        if (!$farm || $farm['status'] !== 'Pending') { echo json_encode(['success'=>false,'message'=>'Cannot reject this farm']); exit; }
+        $pdo->prepare("UPDATE farms SET status='Rejected',rejection_reason=?,updatedAt=NOW() WHERE id=?")->execute([$reason,$farmId]);
+        $pdo->prepare("INSERT INTO audit_log(userId,action,tableName,recordId,details,ipAddress) VALUES(?,?,?,?,?,?)")
+            ->execute([$_SESSION['user_id'],'REJECT_FARM','farms',$farmId,json_encode(['reason'=>$reason,'farm_name'=>$farm['name']]),$_SERVER['REMOTE_ADDR']??'']);
+        echo json_encode(['success'=>true,'message'=>"Farm rejected.",'new_status'=>'Rejected','farm_id'=>$farmId]);
+        exit;
+    }
+
+    // Activate user
+    if ($action === 'activate_user') {
+        $uid = (int)($_POST['user_id'] ?? 0);
+        $pdo->prepare("UPDATE users SET status='Active' WHERE id=?")->execute([$uid]);
+        echo json_encode(['success'=>true,'message'=>'User activated']);
+        exit;
+    }
+
+    // Suspend user
+    if ($action === 'suspend_user') {
+        $uid = (int)($_POST['user_id'] ?? 0);
+        $pdo->prepare("UPDATE users SET status='Suspended' WHERE id=?")->execute([$uid]);
+        echo json_encode(['success'=>true,'message'=>'User suspended']);
+        exit;
+    }
+
+    // Resolve incident
+    if ($action === 'resolve_incident') {
+        $id = (int)($_POST['incident_id'] ?? 0);
+        $pdo->prepare("UPDATE incidents SET status='Resolved',resolvedAt=NOW(),updatedAt=NOW() WHERE id=?")->execute([$id]);
+        echo json_encode(['success'=>true,'message'=>'Incident resolved']);
+        exit;
+    }
+
+    // Review public report
+    if ($action === 'review_report') {
+        $id = (int)($_POST['report_id'] ?? 0);
+        $status = in_array($_POST['status']??'',['Reviewed','Resolved','Dismissed']) ? $_POST['status'] : 'Reviewed';
+        $pdo->prepare("UPDATE public_reports SET status=?,updatedAt=NOW() WHERE id=?")->execute([$status,$id]);
+        echo json_encode(['success'=>true,'message'=>"Report $status"]);
+        exit;
+    }
+
+    // Approve appeal
+    if ($action === 'approve_appeal') {
+        $appealId = (int)($_POST['appeal_id'] ?? 0);
+        $pdo->beginTransaction();
+        $stmt = $pdo->prepare("SELECT farm_id FROM farm_appeals WHERE id=?");
+        $stmt->execute([$appealId]); $appeal = $stmt->fetch();
+        if ($appeal) {
+            $pdo->prepare("UPDATE farm_appeals SET appeal_status='Approved',updated_at=NOW() WHERE id=?")->execute([$appealId]);
+            $pdo->prepare("UPDATE farms SET status='Approved',updatedAt=NOW() WHERE id=?")->execute([$appeal['farm_id']]);
+        }
+        $pdo->commit();
+        echo json_encode(['success'=>true,'message'=>'Appeal approved, farm is now Active']);
+        exit;
+    }
+
+    echo json_encode(['success'=>false,'message'=>'Unknown action']);
+    exit;
+}
+
+// ── Fetch admin dashboard data ────────────────────────────────────────────────
+$stats = [
+    'total_users'      => (int)$pdo->query("SELECT COUNT(*) FROM users WHERE status='Active'")->fetchColumn(),
+    'total_farms'      => (int)$pdo->query("SELECT COUNT(*) FROM farms WHERE status='Approved'")->fetchColumn(),
+    'pending_farms'    => (int)$pdo->query("SELECT COUNT(*) FROM farms WHERE status='Pending'")->fetchColumn(),
+    'total_livestock'  => (int)$pdo->query("SELECT COALESCE(SUM(qty),0) FROM livestock")->fetchColumn(),
+    'active_incidents' => (int)$pdo->query("SELECT COUNT(*) FROM incidents WHERE status IN('Pending','In Progress')")->fetchColumn(),
+    'pending_reports'  => (int)$pdo->query("SELECT COUNT(*) FROM public_reports WHERE status='Pending'")->fetchColumn(),
+    'pending_users'    => (int)$pdo->query("SELECT COUNT(*) FROM users WHERE status='Pending'")->fetchColumn(),
+    'pending_appeals'  => (int)$pdo->query("SELECT COUNT(*) FROM farm_appeals WHERE appeal_status='Pending'")->fetchColumn(),
+];
+
+$all_users    = $pdo->query("SELECT u.*,fp.profile_pix FROM users u LEFT JOIN farmer_profiles fp ON u.id=fp.user_id ORDER BY u.createdAt DESC")->fetchAll();
+$all_farms    = $pdo->query("SELECT f.*,u.firstName,u.lastName,u.email,(SELECT COALESCE(SUM(qty),0) FROM livestock WHERE farmId=f.id) as total_livestock FROM farms f LEFT JOIN users u ON f.ownerId=u.id ORDER BY f.createdAt DESC")->fetchAll();
+$all_livestock= $pdo->query("SELECT l.*,f.name as farm_name,u.firstName,u.lastName FROM livestock l JOIN farms f ON l.farmId=f.id LEFT JOIN users u ON f.ownerId=u.id ORDER BY l.createdAt DESC")->fetchAll();
+$all_incidents= $pdo->query("SELECT i.*,f.name as farm_name,u.firstName,u.lastName FROM incidents i LEFT JOIN farms f ON i.farmId=f.id LEFT JOIN users u ON i.reporterId=u.id ORDER BY i.createdAt DESC")->fetchAll();
+$pub_reports  = $pdo->query("SELECT * FROM public_reports ORDER BY createdAt DESC LIMIT 100")->fetchAll();
+$farm_appeals = $pdo->query("SELECT fa.*,u.firstName,u.lastName,u.email FROM farm_appeals fa JOIN users u ON fa.user_id=u.id ORDER BY fa.created_at DESC")->fetchAll();
+$audit_logs   = $pdo->query("SELECT al.*,u.firstName,u.lastName FROM audit_log al LEFT JOIN users u ON al.userId=u.id ORDER BY al.createdAt DESC LIMIT 200")->fetchAll();
+
+
 ?>
 <!DOCTYPE html>
 <html lang="en">

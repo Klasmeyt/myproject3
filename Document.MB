@@ -1,0 +1,180 @@
+# AgriTrace+ — Complete Fix & Integration Guide
+
+## 📦 Files in this output
+
+| File | Purpose |
+|------|---------|
+| `database.sql` | **Run this first.** Complete schema with all tables including `chat_messages` |
+| `register-form.php` | Fixed registration with 6-digit OTP email verification |
+| `forgot.php` | Fixed password reset — OTP via email or SMS |
+| `api/db.php` | Unified API — approve/reject farms, appeals, stats, notifications |
+| `api/chat.php` | New farmer-to-farmer chat API |
+| `farmer-chat-patch.php` | CSS + HTML + JS to add Chat to farmer.php |
+| `admin-auth-fix.php` | Correct auth + AJAX handlers for admin.php |
+| `agriDA-auth-fix.php` | Correct auth + AJAX handlers for agriDA.php |
+
+---
+
+## 🚀 STEP 1 — Run the Database
+
+```sql
+-- In phpMyAdmin or MySQL CLI:
+source /path/to/database.sql
+```
+
+This safely adds all missing columns and new tables. **Safe to run on existing data.**
+
+---
+
+## 🚀 STEP 2 — Replace Files
+
+Copy these directly into your project root:
+- `register-form.php` → replace your existing file
+- `forgot.php` → replace your existing file
+- `api/db.php` → replace existing (create `api/` folder if needed)
+- `api/chat.php` → new file, place in `api/` folder
+
+---
+
+## 🚀 STEP 3 — Fix admin.php Authentication
+
+Your `admin.php` currently uses wrong session keys. Open `admin-auth-fix.php` and replace the **top PHP block** (from `<?php session_start()` through the role check) in `admin.php`.
+
+**Root cause:** `login.php` sets `$_SESSION['user_role']` but `admin.php` checks `$_SESSION['user_name']` and role `'Administrator'` instead of `'Admin'`.
+
+Also fix all JavaScript `fetch()` calls for approve/reject to use `FormData`:
+```javascript
+// WRONG (causes Network Error):
+fetch('api/approve_farm.php', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({farmId: id})
+})
+
+// CORRECT:
+const fd = new FormData();
+fd.append('action', 'approve_farm');
+fd.append('farm_id', id);
+fetch('admin.php', {method:'POST', body:fd})
+    .then(r=>r.json())
+    .then(data => { if(data.success) location.reload(); });
+```
+
+---
+
+## 🚀 STEP 4 — Fix agriDA.php Authentication
+
+Same pattern as admin. Replace the top PHP auth block with content from `agriDA-auth-fix.php`.
+
+---
+
+## 🚀 STEP 5 — Add Chat to farmer.php
+
+Open `farmer-chat-patch.php` and follow the 4 steps at the top:
+
+### 5a. Add nav item in the sidebar:
+```html
+<!-- After the Notifications nav-item -->
+<div class="nav-item" data-page="chat" id="chatNavItem">
+    <i class="bi bi-chat-dots-fill"></i>
+    Farmer Chat
+    <span class="badge-alert" id="chatBadge" style="display:none;">0</span>
+</div>
+```
+
+### 5b. Copy the **CHAT CSS** section into your `<style>` block
+
+### 5c. Copy the **CHAT HTML** section (the `<section id="sec-chat">` block) before `</main>`
+
+### 5d. Copy the **CHAT JAVASCRIPT** section before `</body>`
+
+---
+
+## 🚀 STEP 6 — Registration OTP Flow
+
+After this fix, registration works like this:
+
+1. User fills form → account created with `status='Unverified'`
+2. OTP email sent to their address (6-digit, 10-minute expiry)
+3. OTP modal shows — user enters code
+4. Account changes to `status='Pending'` (still needs admin approval)
+5. Admin activates the account from the admin panel
+
+**Email sending** uses PHP's built-in `mail()`. For production, configure SMTP via PHPMailer or your hosting provider's SMTP settings.
+
+---
+
+## 🚀 STEP 7 — SMS for Forgot Password (Philippines)
+
+The `forgot.php` file has SMS support wired up. To activate it, integrate **Semaphore** (most popular PH SMS gateway):
+
+```php
+function sendSms($mobile, $message) {
+    $apiKey = 'YOUR_SEMAPHORE_API_KEY';
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => 'https://api.semaphore.co/api/v4/messages',
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query([
+            'apikey'      => $apiKey,
+            'number'      => $mobile,
+            'message'     => $message,
+            'sendername'  => 'AGRITRACE'
+        ]),
+        CURLOPT_RETURNTRANSFER => true
+    ]);
+    $result = curl_exec($ch); curl_close($ch);
+    return $result;
+}
+```
+
+Replace the comment `// sendSms(...)` in `forgot.php` with a call to this function.
+
+---
+
+## 🐛 Common Errors Fixed
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| Network Error on approve/reject | JS sends JSON but PHP expects POST form | Use `FormData` in fetch calls |
+| Login redirects to index.php | Session key mismatch (`user_name` vs `user_role`) | Use auth fix files |
+| Register shows "Pending" immediately | No email verification step | Fixed in new `register-form.php` |
+| Chat not loading | `chat_messages` table didn't exist | Run new `database.sql` |
+| Farm edit "Database error" | Mixed PDO/mysqli or wrong column names | All APIs now use PDO consistently |
+| `updatedAt` column not found | Schema was incomplete | New SQL adds all missing columns |
+
+---
+
+## 🔐 Default Login Credentials
+
+After running `database.sql`, these accounts are seeded (password: `password`):
+
+| Role | Email |
+|------|-------|
+| Admin | admin@agritrace.ph |
+| Farmer | farmer@agritrace.ph |
+| Agriculture Official | official@agritrace.ph |
+
+---
+
+## 📁 Recommended File Structure
+
+```
+your-project/
+├── index.php
+├── login.php
+├── register-form.php  ← replaced
+├── forgot.php         ← replaced
+├── farmer.php         ← patched (chat added)
+├── admin.php          ← auth block replaced
+├── agriDA.php         ← auth block replaced
+├── api/
+│   ├── db.php         ← replaced
+│   └── chat.php       ← new
+├── uploads/
+│   ├── farms/
+│   ├── incidents/
+│   ├── profiles/
+│   └── public_reports/
+└── database.sql       ← run this
+```

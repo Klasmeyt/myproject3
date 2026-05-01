@@ -6,7 +6,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
 // 2. Database Connection
 $host = 'localhost';
-$dbname = 'myproject4';
+$dbname = 'myproject5';
 $username = 'root';
 $password = '';
 

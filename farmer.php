@@ -306,6 +306,219 @@ tr:hover{background:#f8fafc;}
 #incident-map{height:300px;border-radius:.75rem;margin-top:.75rem;border:2px solid var(--border);}
 @media(max-width:768px){.content{padding:1.5rem 1rem;}.stats-grid{grid-template-columns:repeat(2,1fr);}.form-row{grid-template-columns:1fr;}.cert-grid{grid-template-columns:1fr;}}
 @media(max-width:480px){.stats-grid{grid-template-columns:1fr;}}
+
+/* ── Chat Layout ─────────────────────────────────────────── */
+.chat-wrap{display:grid;grid-template-columns:300px 1fr;height:calc(100vh - 80px);gap:0;
+  border:1px solid var(--border);border-radius:1rem;overflow:hidden;background:#fff;}
+.chat-sidebar{border-right:1px solid var(--border);display:flex;flex-direction:column;}
+.chat-sidebar-hdr{padding:1.25rem;border-bottom:1px solid var(--border);font-weight:700;font-size:1.05rem;
+  display:flex;align-items:center;gap:.5rem;}
+.chat-search{padding:.75rem 1rem;border-bottom:1px solid var(--border);}
+.chat-search input{width:100%;padding:.625rem .875rem;border:1px solid var(--border);border-radius:.5rem;
+  font-size:.9rem;background:#f8fafc;outline:none;}
+.chat-search input:focus{border-color:var(--acc);}
+.farmer-list{flex:1;overflow-y:auto;}
+.farmer-item{display:flex;align-items:center;gap:.875rem;padding:1rem 1.25rem;cursor:pointer;
+  transition:.2s;border-bottom:1px solid #f9fafb;position:relative;}
+.farmer-item:hover{background:#f0fdf4;}
+.farmer-item.active{background:#d1fae5;border-left:3px solid var(--acc);}
+.farmer-avatar{width:44px;height:44px;border-radius:50%;background:var(--acc);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1rem;flex-shrink:0;}
+.farmer-info{flex:1;min-width:0;}
+.farmer-name{font-weight:600;font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.farmer-status{font-size:.8rem;color:var(--sub);}
+.unread-badge{background:var(--acc);color:#fff;border-radius:9999px;padding:.15rem .5rem;
+  font-size:.75rem;font-weight:700;min-width:20px;text-align:center;}
+ 
+/* ── Chat Main ───────────────────────────────────────────── */
+.chat-main{display:flex;flex-direction:column;}
+.chat-hdr{padding:1rem 1.5rem;border-bottom:1px solid var(--border);display:flex;align-items:center;
+  gap:1rem;background:#fff;}
+.chat-hdr-avatar{width:40px;height:40px;border-radius:50%;background:var(--acc);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;}
+.chat-hdr-name{font-weight:700;font-size:1.05rem;}
+.chat-hdr-sub{font-size:.8rem;color:var(--sub);}
+.chat-empty{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;
+  color:var(--sub);gap:1rem;}
+.chat-messages{flex:1;overflow-y:auto;padding:1.25rem;display:flex;flex-direction:column;gap:.75rem;}
+.msg-row{display:flex;gap:.625rem;align-items:flex-end;}
+.msg-row.mine{flex-direction:row-reverse;}
+.msg-bubble{max-width:65%;padding:.75rem 1rem;border-radius:1rem;font-size:.95rem;line-height:1.5;word-break:break-word;}
+.msg-bubble.them{background:#f1f5f9;color:#1e293b;border-bottom-left-radius:.25rem;}
+.msg-bubble.mine{background:var(--acc);color:#fff;border-bottom-right-radius:.25rem;}
+.msg-time{font-size:.7rem;color:var(--sub);white-space:nowrap;margin-bottom:.25rem;}
+.msg-avatar{width:28px;height:28px;border-radius:50%;background:#e2e8f0;color:var(--sub);
+  display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;flex-shrink:0;}
+.chat-input-wrap{padding:1rem 1.25rem;border-top:1px solid var(--border);display:flex;gap:.75rem;
+  align-items:flex-end;background:#fff;}
+.chat-input{flex:1;padding:.75rem 1rem;border:2px solid var(--border);border-radius:1.25rem;
+  font-size:.95rem;font-family:inherit;resize:none;outline:none;max-height:120px;
+  transition:border-color .2s;}
+.chat-input:focus{border-color:var(--acc);}
+.chat-send-btn{width:44px;height:44px;background:var(--acc);color:#fff;border:none;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:.2s;}
+.chat-send-btn:hover{background:var(--acc2);}
+.chat-send-btn:disabled{opacity:.5;cursor:not-allowed;}
+ 
+@media(max-width:768px){
+  .chat-wrap{grid-template-columns:1fr;}
+  .chat-sidebar{display:none;}
+  .chat-sidebar.mobile-show{display:flex;}
+}
+
+/* E-Certificate specific styles to match admin panel */
+#sec-ecert .stats-row { 
+  display: grid; 
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+  gap: 1rem; 
+  margin-bottom: 1.5rem; 
+}
+#sec-ecert .stat-card {
+  background: var(--white);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  display: flex; 
+  align-items: center; 
+  gap: 1rem;
+  box-shadow: var(--shadow-card);
+  border: 1px solid #edf0e8;
+}
+#sec-ecert .stat-icon {
+  width: 3rem; height: 3rem;
+  border-radius: .75rem;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.25rem;
+}
+#sec-ecert .stat-info .val { 
+  font-size: 1.75rem; 
+  font-weight: 700; 
+  color: var(--text-dark); 
+}
+#sec-ecert .stat-info .lbl { 
+  font-size: .875rem; 
+  color: var(--sub); 
+}
+
+#sec-ecert .toolbar {
+  background: var(--white);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  display: flex; 
+  align-items: center; 
+  gap: .75rem;
+  margin-bottom: 1.25rem;
+  box-shadow: var(--shadow-card);
+  flex-wrap: wrap;
+}
+#sec-ecert .toolbar-search {
+  display: flex; 
+  align-items: center; 
+  gap: .5rem;
+  background: #f4f6f0; 
+  border-radius: .5rem;
+  padding: .5rem .875rem; 
+  flex: 1; 
+  min-width: 200px;
+}
+#sec-ecert .filter-tabs { display: flex; gap: .25rem; }
+#sec-ecert .filter-tab {
+  padding: .4375rem .875rem; 
+  border-radius: .5rem; 
+  font-size: .8125rem;
+  border: 1px solid #e0e3db; 
+  background: #fff;
+  color: var(--text-mid); 
+  cursor: pointer;
+}
+#sec-ecert .btn-issue {
+  padding: .5625rem 1.25rem;
+  background: #c9a84c;
+  color: #1a4731;
+  border: none; 
+  border-radius: .5rem;
+  font-size: .84375rem; 
+  font-weight: 700;
+  cursor: pointer; 
+  display: flex; 
+  align-items: center; 
+  gap: .5rem;
+}
+
+#sec-ecert .table-card {
+  background: var(--white);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  border: 1px solid #edf0e8;
+  margin-bottom: 1rem;
+}
+#sec-ecert table { width: 100%; border-collapse: collapse; }
+#sec-ecert th {
+  background: #f7f9f4;
+  padding: .75rem 1rem;
+  text-align: left; 
+  font-size: .71875rem;
+  font-weight: 600; 
+  color: var(--sub); 
+  text-transform: uppercase;
+  border-bottom: 1px solid #edf0e8;
+}
+#sec-ecert td {
+  padding: .8125rem 1rem;
+  font-size: .84375rem;
+  border-bottom: 1px solid #f0f2ed;
+}
+#sec-ecert .action-btns { display: flex; gap: .375rem; }
+#sec-ecert .btn-sm {
+  width: 1.875rem; height: 1.875rem;
+  border-radius: .375rem; 
+  border: 1px solid #e0e3db;
+  background: #fff; 
+  color: var(--text-mid);
+  display: flex; 
+  align-items: center; 
+  justify-content: center;
+  cursor: pointer; 
+  font-size: .8125rem;
+}
+
+#sec-ecert .modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5); 
+  backdrop-filter: blur(3px);
+  z-index: 10000; 
+  display: none;
+  align-items: center; 
+  justify-content: center; 
+  padding: 1.25rem;
+}
+#sec-ecert .modal-overlay.open { display: flex; }
+#sec-ecert .modal-box {
+  background: #fff; 
+  border-radius: 1rem;
+  width: 100%; 
+  max-width: 90vw;
+  max-height: 90vh;
+  box-shadow: 0 1.5rem 5rem rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+#sec-ecert .modal-body { padding: 1.5rem; max-height: 70vh; overflow-y: auto; }
+#sec-ecert .form-group { margin-bottom: 1rem; }
+#sec-ecert .form-group label { 
+  display: block; 
+  font-size: .78125rem; 
+  font-weight: 600; 
+  color: var(--text-mid); 
+  margin-bottom: .375rem; 
+}
+#sec-ecert .form-group input,
+#sec-ecert .form-group select {
+  width: 100%; 
+  padding: .625rem .875rem;
+  border: 1px solid #e0e3db; 
+  border-radius: .5rem;
+  font-size: .875rem;
+}
 </style>
 </head>
 <body>
@@ -322,6 +535,11 @@ tr:hover{background:#f8fafc;}
     <div class="nav-item" data-page="livestock"><i class="bi bi-activity"></i>Livestock Monitoring</div>
     <div class="nav-item" data-page="incident"><i class="bi bi-exclamation-triangle"></i>Incident Reporting</div>
     <div class="nav-item" data-page="notifications"><i class="bi bi-bell"></i>Notifications<span class="badge-alert"><?= $dashboardData['activeIncidents'] ?></span></div>
+     <div class="nav-item" data-page="chat" id="chatNavItem">
+        <i class="bi bi-chat-dots-fill"></i>
+        Farmer Chat
+        <span class="badge-alert" id="chatBadge" style="display:none;">0</span>
+    </div>
     <div class="nav-item" data-page="ecert"><i class="bi bi-patch-check"></i>E-Certificate</div>
     <div class="nav-item" data-page="profile"><i class="bi bi-person-circle"></i>Profile</div>
     <div style="padding:1rem 1.5rem;"><hr style="border:none;border-top:1px solid rgba(255,255,255,.1);"></div>
@@ -642,45 +860,76 @@ tr:hover{background:#f8fafc;}
       </div>
     </section>
 
-    <!-- ═══ E-CERTIFICATE ═══ -->
-    <section id="sec-ecert" class="page-section">
-      <div class="card">
-        <h2 class="card-title"><i class="bi bi-patch-check-fill" style="color:var(--acc);"></i> E-Certificates</h2>
-        <?php if(!empty($eCertData)): ?>
-        <div class="cert-grid">
-          <?php foreach($eCertData as $cert): ?>
-          <div class="cert-card">
-            <div style="font-size:.8rem;font-weight:700;color:#2c5530;letter-spacing:1px;text-transform:uppercase;margin-bottom:.375rem;">DA-CS-<?= htmlspecialchars($cert['certificate_no']) ?></div>
-            <div style="font-size:1.15rem;font-weight:700;color:#1a3c20;margin-bottom:.375rem;"><?= htmlspecialchars($cert['farm_name']) ?></div>
-            <div style="font-size:.9rem;color:var(--sub);margin-bottom:.875rem;"><?= htmlspecialchars($cert['recipient_name']??$firstName.' '.$lastName) ?></div>
-            <span class="badge badge-active">✅ Active</span>
-            <div style="font-size:.85rem;color:var(--sub);margin-top:.875rem;"><i class="bi bi-calendar-check"></i> Valid until <?= date('M d, Y',strtotime($cert['valid_until'])) ?></div>
-            <div style="margin-top:1rem;display:flex;gap:.75rem;">
-              <a href="download_certificate.php?id=<?= $cert['id'] ?>" class="btn btn-primary" style="flex:1;justify-content:center;"><i class="bi bi-download"></i> Download</a>
-              <button class="btn btn-secondary" style="padding:.75rem 1rem;" onclick="window.print()"><i class="bi bi-printer"></i></button>
-            </div>
-          </div>
-          <?php endforeach; ?>
-        </div>
-        <?php else: ?>
-        <div class="request-cert">
-          <i class="bi bi-award" style="font-size:4rem;color:#2c5530;display:block;margin-bottom:1.5rem;"></i>
-          <h3 style="color:#2c5530;font-size:1.75rem;font-weight:800;margin-bottom:.875rem;">Get Your DA Camarines Sur Certificate</h3>
-          <p style="color:#4a7c59;margin-bottom:2rem;">Official accreditation for approved farms. Valid 3 years.</p>
-          <?php if($hasApprovedFarms): ?>
-          <form method="POST" action="request_certificate.php" style="max-width:420px;margin:0 auto;">
-            <input type="hidden" name="user_id" value="<?= $userId ?>">
-            <textarea name="request_message" rows="2" class="form-input" placeholder="Optional notes…" style="margin-bottom:1rem;"></textarea>
-            <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:1rem;font-size:1.05rem;"><i class="bi bi-file-earmark-check"></i> Generate Certificate</button>
-          </form>
-          <?php else: ?>
-          <p style="color:var(--sub);margin-bottom:1.5rem;">You need at least one <strong>approved farm</strong> to request a certificate.</p>
-          <button class="btn btn-primary" style="justify-content:center;" onclick="navTo('farm-reg')"><i class="bi bi-house-add-fill"></i> Register a Farm</button>
-          <?php endif; ?>
-        </div>
-        <?php endif; ?>
+    <section id="sec-chat" class="page-section">
+  <div class="chat-wrap" id="chatWrap">
+ 
+    <!-- Sidebar: Farmer List -->
+    <div class="chat-sidebar" id="chatSidebar">
+      <div class="chat-sidebar-hdr">
+        <i class="bi bi-chat-dots-fill" style="color:var(--acc);"></i> Farmer Community
       </div>
-    </section>
+      <div class="chat-search">
+        <input type="text" id="farmerSearch" placeholder="Search farmers…" oninput="filterFarmers(this.value)">
+      </div>
+      <div class="farmer-list" id="farmerList">
+        <div style="padding:2rem;text-align:center;color:var(--sub);">
+          <i class="bi bi-arrow-repeat" style="font-size:2rem;"></i>
+          <p style="margin-top:.5rem;">Loading farmers…</p>
+        </div>
+      </div>
+    </div>
+ 
+    <!-- Main Chat Area -->
+    <div class="chat-main" id="chatMain">
+      <div class="chat-empty" id="chatEmpty">
+        <i class="bi bi-chat-heart-fill" style="font-size:3.5rem;opacity:.3;"></i>
+        <h3 style="font-weight:700;">Select a Farmer to Chat</h3>
+        <p style="font-size:.9rem;">Connect with fellow farmers in your community</p>
+      </div>
+ 
+      <!-- Active Chat (hidden until a farmer is selected) -->
+      <div id="activeChat" style="display:none;flex:1;display:none;flex-direction:column;">
+        <div class="chat-hdr" id="chatHdr">
+          <div class="chat-hdr-avatar" id="chatHdrAvatar">?</div>
+          <div>
+            <div class="chat-hdr-name" id="chatHdrName">—</div>
+            <div class="chat-hdr-sub">Farmer · AgriTrace+ Member</div>
+          </div>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input-wrap">
+          <textarea class="chat-input" id="chatInput" rows="1" placeholder="Type a message…" 
+                    onkeydown="handleChatKey(event)" oninput="autoResizeTextarea(this)"></textarea>
+          <button class="chat-send-btn" id="chatSendBtn" onclick="sendMessage()" title="Send">
+            <i class="bi bi-send-fill"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+ 
+  </div>
+</section>
+
+    <!-- ═══ E-CERTIFICATE ═══ -->
+<section id="sec-ecert" class="page-section" data-page="ecert">
+  <div class="card">
+    <h2 class="card-title"><i class="bi bi-patch-check-fill" style="color:var(--acc);"></i> E-Certificates</h2>
+    
+    <!-- Loading state -->
+    <div id="ecert-loading" style="text-align:center;padding:3rem;">
+      <i class="bi bi-patch-check" style="font-size:3rem;color:var(--sub);display:block;margin-bottom:1rem;opacity:.5;"></i>
+      <p style="color:var(--sub);">Loading E-Certificate Management...</p>
+    </div>
+
+    <!-- Content container -->
+    <div id="ecert-content" style="display:none;">
+      <!-- Full ecertificate.php content will be loaded here -->
+    </div>
+  </div>
+</section>
+
+<!-- Navigation item -->
+<div class="nav-item" data-page="ecert"><i class="bi bi-patch-check"></i>E-Certificate</div>
 
     <!-- ═══ PROFILE ═══ -->
     <section id="sec-profile" class="page-section">
@@ -1241,6 +1490,289 @@ async function appealFarm(id) {
 // Init map for incident section when first opened
 document.querySelector('.nav-item[data-page="incident"]').addEventListener('click', ()=>{
     setTimeout(initIncMap,400);
+});
+
+// ── Chat State ────────────────────────────────────────────────────────────────
+let chatState = {
+    currentReceiverId: null,
+    currentReceiverName: '',
+    lastMessageId: 0,
+    pollTimer: null,
+    allFarmers: []
+};
+ 
+// ── Load Farmer List ──────────────────────────────────────────────────────────
+async function loadFarmerList() {
+    try {
+        const res  = await fetch('api/chat.php?action=list_farmers');
+        const data = await res.json();
+        if (!data.success) return;
+        chatState.allFarmers = data.farmers;
+        renderFarmerList(data.farmers);
+    } catch(e) { console.error('Chat load error:', e); }
+}
+ 
+function renderFarmerList(farmers) {
+    const list = document.getElementById('farmerList');
+    if (!farmers.length) {
+        list.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--sub);">
+            <i class="bi bi-people" style="font-size:2rem;"></i>
+            <p style="margin-top:.5rem;">No other farmers yet</p></div>`;
+        return;
+    }
+    list.innerHTML = farmers.map(f => {
+        const initials = (f.firstName[0] + (f.lastName[0]||'')).toUpperCase();
+        const unreadBadge = f.unread > 0 
+            ? `<span class="unread-badge">${f.unread}</span>` : '';
+        return `<div class="farmer-item" data-id="${f.id}" data-name="${f.firstName} ${f.lastName}"
+                     onclick="openChat(${f.id},'${escHtml(f.firstName)} ${escHtml(f.lastName)}','${initials}')">
+            <div class="farmer-avatar">${initials}</div>
+            <div class="farmer-info">
+                <div class="farmer-name">${escHtml(f.firstName)} ${escHtml(f.lastName)}</div>
+                <div class="farmer-status">${f.mobile || 'Farmer'}</div>
+            </div>
+            ${unreadBadge}
+        </div>`;
+    }).join('');
+}
+ 
+function filterFarmers(q) {
+    const term = q.toLowerCase();
+    const filtered = chatState.allFarmers.filter(f =>
+        (f.firstName + ' ' + f.lastName).toLowerCase().includes(term)
+    );
+    renderFarmerList(filtered);
+}
+ 
+// ── Open Chat with a Farmer ───────────────────────────────────────────────────
+function openChat(receiverId, name, initials) {
+    chatState.currentReceiverId = receiverId;
+    chatState.currentReceiverName = name;
+    chatState.lastMessageId = 0;
+ 
+    // Update header
+    document.getElementById('chatHdrAvatar').textContent = initials;
+    document.getElementById('chatHdrName').textContent   = name;
+ 
+    // Show chat area
+    document.getElementById('chatEmpty').style.display  = 'none';
+    document.getElementById('activeChat').style.display = 'flex';
+    document.getElementById('activeChat').style.flexDirection = 'column';
+    document.getElementById('activeChat').style.flex    = '1';
+ 
+    // Highlight active farmer
+    document.querySelectorAll('.farmer-item').forEach(el => el.classList.remove('active'));
+    const el = document.querySelector(`.farmer-item[data-id="${receiverId}"]`);
+    if (el) { el.classList.add('active'); const b = el.querySelector('.unread-badge'); if (b) b.remove(); }
+ 
+    // Clear messages and load
+    document.getElementById('chatMessages').innerHTML = '';
+    loadMessages(true);
+    startPolling();
+}
+ 
+// ── Load Messages ─────────────────────────────────────────────────────────────
+async function loadMessages(scrollToBottom = false) {
+    if (!chatState.currentReceiverId) return;
+    try {
+        const res  = await fetch(`api/chat.php?action=get_messages&other_id=${chatState.currentReceiverId}&last_id=${chatState.lastMessageId}`);
+        const data = await res.json();
+        if (!data.success || !data.messages.length) return;
+ 
+        const box = document.getElementById('chatMessages');
+        const wasAtBottom = box.scrollHeight - box.clientHeight <= box.scrollTop + 60;
+ 
+        data.messages.forEach(msg => {
+            chatState.lastMessageId = Math.max(chatState.lastMessageId, msg.id);
+            appendMessage(msg);
+        });
+ 
+        if (scrollToBottom || wasAtBottom) box.scrollTop = box.scrollHeight;
+    } catch(e) { console.error('Load msg error:', e); }
+}
+ 
+function appendMessage(msg) {
+    const box      = document.getElementById('chatMessages');
+    const mine     = parseInt(msg.sender_id) === parseInt(<?= $userId ?>);
+    const initials = (msg.firstName[0] + (msg.lastName[0]||'')).toUpperCase();
+    const time     = new Date(msg.created_at).toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'});
+ 
+    const div = document.createElement('div');
+    div.className = 'msg-row' + (mine ? ' mine' : '');
+    div.innerHTML = !mine 
+        ? `<div class="msg-avatar">${initials}</div>
+           <div><div class="msg-bubble them">${escHtml(msg.message)}</div><div class="msg-time">${time}</div></div>`
+        : `<div><div class="msg-bubble mine">${escHtml(msg.message)}</div><div class="msg-time" style="text-align:right;">${time}</div></div>`;
+    box.appendChild(div);
+}
+ 
+// ── Send Message ──────────────────────────────────────────────────────────────
+async function sendMessage() {
+    const input = document.getElementById('chatInput');
+    const msg   = input.value.trim();
+    if (!msg || !chatState.currentReceiverId) return;
+ 
+    const btn = document.getElementById('chatSendBtn');
+    btn.disabled = true;
+    input.value  = '';
+    input.style.height = '';
+ 
+    try {
+        const res = await fetch('api/chat.php?action=send_message', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({receiver_id: chatState.currentReceiverId, message: msg})
+        });
+        const data = await res.json();
+        if (data.success) {
+            // Immediately show sent message
+            const now = new Date().toISOString().replace('T',' ').slice(0,-5);
+            appendMessage({
+                id: data.message_id,
+                sender_id: <?= $userId ?>,
+                receiver_id: chatState.currentReceiverId,
+                message: msg,
+                firstName: '<?= addslashes($firstName) ?>',
+                lastName: '<?= addslashes($lastName) ?>',
+                created_at: now
+            });
+            chatState.lastMessageId = Math.max(chatState.lastMessageId, data.message_id);
+            const box = document.getElementById('chatMessages');
+            box.scrollTop = box.scrollHeight;
+        } else {
+            showToast(data.message || 'Send failed', 'error');
+        }
+    } catch(e) {
+        showToast('Network error. Check your connection.', 'error');
+    } finally {
+        btn.disabled = false;
+        input.focus();
+    }
+}
+ 
+function handleChatKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+ 
+function autoResizeTextarea(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+ 
+// ── Polling ───────────────────────────────────────────────────────────────────
+function startPolling() {
+    clearInterval(chatState.pollTimer);
+    chatState.pollTimer = setInterval(() => loadMessages(false), 4000);
+}
+ 
+function stopPolling() {
+    clearInterval(chatState.pollTimer);
+}
+ 
+// ── Unread badge on nav ───────────────────────────────────────────────────────
+async function refreshUnreadBadge() {
+    try {
+        const res = await fetch('api/chat.php?action=unread_count');
+        const data = await res.json();
+        const badge = document.getElementById('chatBadge');
+        if (badge) {
+            badge.style.display = data.count > 0 ? '' : 'none';
+            badge.textContent = data.count;
+        }
+    } catch(e) {}
+}
+ 
+// ── Init chat when tab opened ─────────────────────────────────────────────────
+const _origNavTo = window.navTo;
+window.navTo = function(page) {
+    _origNavTo(page);
+    if (page === 'chat') {
+        loadFarmerList();
+        refreshUnreadBadge();
+    } else {
+        stopPolling();
+    }
+};
+ 
+// Poll unread every 15s in background
+setInterval(refreshUnreadBadge, 15000);
+ 
+// ── Util ──────────────────────────────────────────────────────────────────────
+function escHtml(str) {
+    return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+
+// E-Certificate AJAX loader
+async function loadECertificate() {
+    const loadingEl = document.getElementById('ecert-loading');
+    const contentEl = document.getElementById('ecert-content');
+    
+    try {
+        loadingEl.style.display = 'block';
+        contentEl.style.display = 'none';
+        
+        const response = await fetch('ecertificate.php');
+        const html = await response.text();
+        
+        // Create a temporary container to parse the HTML
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        
+        // Extract just the content area (everything inside .content)
+        const content = tempDiv.querySelector('.content');
+        if (content) {
+            contentEl.innerHTML = content.innerHTML;
+            // Re-attach all event listeners and scripts
+            contentEl.querySelectorAll('script').forEach(oldScript => {
+                const newScript = document.createElement('script');
+                newScript.text = oldScript.textContent;
+                oldScript.parentNode.replaceChild(newScript, oldScript);
+            });
+        } else {
+            contentEl.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--sub);">Failed to load E-Certificate content.</div>';
+        }
+        
+        contentEl.style.display = 'block';
+        loadingEl.style.display = 'none';
+        
+        // Update page title
+        document.title = 'E-Certificate Management | AgriTrace+ Camarines Sur';
+        
+    } catch (error) {
+        console.error('Error loading E-Certificate:', error);
+        loadingEl.innerHTML = '<p style="color:#c0392b;">Failed to load E-Certificate. Please refresh the page.</p>';
+    }
+}
+
+// Update your existing navigation handler to include E-Certificate
+document.querySelectorAll('.nav-item[data-page]').forEach(navItem => {
+    navItem.addEventListener('click', function(e) {
+        e.preventDefault();
+        const page = this.dataset.page;
+        
+        // Hide all sections
+        document.querySelectorAll('.page-section').forEach(section => {
+            section.style.display = 'none';
+        });
+        
+        // Show target section
+        const targetSection = document.getElementById(`sec-${page}`);
+        if (targetSection) {
+            targetSection.style.display = 'block';
+            
+            // Load E-Certificate content if needed
+            if (page === 'ecert') {
+                loadECertificate();
+            }
+            
+            // Update active nav
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+            this.classList.add('active');
+        }
+    });
 });
 </script>
 </body>

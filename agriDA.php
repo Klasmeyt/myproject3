@@ -1,158 +1,135 @@
 <?php
 session_start();
-if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
-    header('Location: login.php?redirect='.urlencode($_SERVER['PHP_SELF'])); exit;
+
+// ── Auth Check (FIXED - uses same session keys as login.php) ──────────────────
+if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
+    header('Location: login.php?redirect=' . urlencode($_SERVER['PHP_SELF']));
+    exit;
 }
+
 $user_role = $_SESSION['user_role'] ?? '';
 $user_id   = $_SESSION['user_id']   ?? 0;
 
+  if (!in_array($user_role, ['Agriculture Official', 'Admin'])) {
+      header('Location: index.php?error=access_denied');
+    exit;
+}
+
+// ── DB Connection ─────────────────────────────────────────────────────────────
 try {
     $pdo = new PDO('mysql:host=localhost;dbname=myproject4;charset=utf8mb4','root','',[
-        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
     ]);
-} catch(PDOException $e) { die('Database error'); }
+} catch(PDOException $e) {
+    die('Database connection failed: ' . $e->getMessage());
+}
 
-// ── AJAX HANDLERS ─────────────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD']==='POST') {
+// ── AJAX Handlers ─────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
-    if (!in_array($user_role,['Admin','Agriculture Official'])) {
-        echo json_encode(['success'=>false,'message'=>'Insufficient permissions']); exit;
-    }
 
     // APPROVE FARM
-    if (($_POST['action']??'')==='approve_farm') {
+    if (($_POST['action']??'') === 'approve_farm') {
         $farmId = (int)$_POST['farm_id'];
-        $s=$pdo->prepare("SELECT id,name,status FROM farms WHERE id=?"); $s->execute([$farmId]);
-        $farm=$s->fetch();
-        if(!$farm){echo json_encode(['success'=>false,'message'=>'Farm not found']); exit;}
-        if($farm['status']!=='Pending'){echo json_encode(['success'=>false,'message'=>"Farm already {$farm['status']}"]); exit;}
+        $s = $pdo->prepare("SELECT id,name,status FROM farms WHERE id=?"); $s->execute([$farmId]); $farm = $s->fetch();
+        if (!$farm) { echo json_encode(['success'=>false,'message'=>'Farm not found']); exit; }
+        if ($farm['status'] !== 'Pending') { echo json_encode(['success'=>false,'message'=>"Farm already {$farm['status']}"]); exit; }
         $pdo->prepare("UPDATE farms SET status='Approved',updatedAt=NOW() WHERE id=?")->execute([$farmId]);
         $pdo->prepare("INSERT INTO audit_log(userId,action,tableName,recordId,details,ipAddress) VALUES(?,?,?,?,?,?)")
             ->execute([$user_id,'APPROVE_FARM','farms',$farmId,json_encode(['farm_name'=>$farm['name'],'officer_id'=>$user_id]),$_SERVER['REMOTE_ADDR']??'']);
-        echo json_encode(['success'=>true,'message'=>"Farm '{$farm['name']}' approved!",'new_status'=>'Approved','farm_id'=>$farmId]); exit;
+        echo json_encode(['success'=>true,'message'=>"Farm '{$farm['name']}' approved!",'new_status'=>'Approved','farm_id'=>$farmId]);
+        exit;
     }
 
     // REJECT FARM
-    if (($_POST['action']??'')==='reject_farm') {
+    if (($_POST['action']??'') === 'reject_farm') {
         $farmId = (int)$_POST['farm_id'];
-        $reason = $_POST['reason'] ?? 'No reason provided';
-        $s=$pdo->prepare("SELECT id,name,status FROM farms WHERE id=?"); $s->execute([$farmId]);
-        $farm=$s->fetch();
-        if(!$farm){echo json_encode(['success'=>false,'message'=>'Farm not found']); exit;}
-        if($farm['status']!=='Pending'){echo json_encode(['success'=>false,'message'=>"Farm already {$farm['status']}"]); exit;}
+        $reason = trim($_POST['reason'] ?? 'No reason provided');
+        $s = $pdo->prepare("SELECT id,name,status FROM farms WHERE id=?"); $s->execute([$farmId]); $farm = $s->fetch();
+        if (!$farm || $farm['status'] !== 'Pending') { echo json_encode(['success'=>false,'message'=>'Farm not found or not pending']); exit; }
         $pdo->prepare("UPDATE farms SET status='Rejected',rejection_reason=?,updatedAt=NOW() WHERE id=?")->execute([$reason,$farmId]);
         $pdo->prepare("INSERT INTO audit_log(userId,action,tableName,recordId,details,ipAddress) VALUES(?,?,?,?,?,?)")
             ->execute([$user_id,'REJECT_FARM','farms',$farmId,json_encode(['reason'=>$reason,'farm_name'=>$farm['name']]),$_SERVER['REMOTE_ADDR']??'']);
-        echo json_encode(['success'=>true,'message'=>"Farm '{$farm['name']}' rejected.",'new_status'=>'Rejected','farm_id'=>$farmId]); exit;
+        echo json_encode(['success'=>true,'message'=>"Farm rejected.",'new_status'=>'Rejected','farm_id'=>$farmId]);
+        exit;
     }
 
     // RESOLVE INCIDENT
-    if (($_POST['action']??'')==='resolve_incident') {
-        $id=(int)$_POST['incident_id'];
+    if (($_POST['action']??'') === 'resolve_incident') {
+        $id = (int)$_POST['incident_id'];
         $pdo->prepare("UPDATE incidents SET status='Resolved',resolvedAt=NOW(),updatedAt=NOW() WHERE id=?")->execute([$id]);
-        echo json_encode(['success'=>true,'message'=>'Incident resolved.']); exit;
+        echo json_encode(['success'=>true,'message'=>'Incident resolved.']);
+        exit;
     }
 
-    // PROFILE UPDATE WITH IMAGE SUPPORT (REPLACED OLD VERSION)
+    // PROFILE UPDATE WITH IMAGE SUPPORT
     if (isset($_POST['update_profile'])) {
         try {
-            $firstName = trim($_POST['firstName']);
-            $lastName = trim($_POST['lastName']);
-            $email = trim($_POST['email']);
-            $mobile = $_POST['mobile'] ?? '';
-            
-            // Handle profile image upload
+            $firstName = trim($_POST['firstName'] ?? '');
+            $lastName  = trim($_POST['lastName']  ?? '');
+            $email     = trim($_POST['email']     ?? '');
+            $mobile    = trim($_POST['mobile']    ?? '');
+
             $profileImage = $_POST['existing_image'] ?? '';
             if (isset($_FILES['profile_image']) && $_FILES['profile_image']['error'] === UPLOAD_ERR_OK) {
                 $uploadDir = 'uploads/profiles/';
-                if (!is_dir($uploadDir)) {
-                    mkdir($uploadDir, 0755, true);
-                }
-                
-                $fileName = $user_id . '_' . time() . '_' . basename($_FILES['profile_image']['name']);
-                $filePath = $uploadDir . $fileName;
-                $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-                
-                if (in_array($_FILES['profile_image']['type'], $allowedTypes) && $_FILES['profile_image']['size'] <= 2 * 1024 * 1024) {
-                    if (move_uploaded_file($_FILES['profile_image']['tmp_name'], $filePath)) {
-                        $profileImage = $filePath;
-                        // Delete old image if exists
-                        $oldImage = $pdo->prepare("SELECT profile_image FROM officer_profiles WHERE user_id=?");
-                        $oldImage->execute([$user_id]);
-                        $oldImg = $oldImage->fetchColumn();
-                        if ($oldImg && file_exists($oldImg) && $oldImg !== $profileImage) {
-                            unlink($oldImg);
-                        }
+                if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+                $allowed = ['image/jpeg','image/png','image/gif','image/webp'];
+                if (in_array($_FILES['profile_image']['type'], $allowed) && $_FILES['profile_image']['size'] <= 2*1024*1024) {
+                    $fname2  = $user_id . '_' . time() . '.' . pathinfo($_FILES['profile_image']['name'], PATHINFO_EXTENSION);
+                    $fpath   = $uploadDir . $fname2;
+                    if (move_uploaded_file($_FILES['profile_image']['tmp_name'], $fpath)) {
+                        $profileImage = $fpath;
                     }
                 }
             }
-            
-            // Update user basic info
+
             $pdo->prepare("UPDATE users SET firstName=?,lastName=?,email=?,mobile=? WHERE id=?")
-                ->execute([$firstName, $lastName, $email, $mobile, $user_id]);
-            
-            // Update officer profile (including image)
-            $pdo->prepare("INSERT INTO officer_profiles(user_id,gov_id,department,position,office,assigned_region,province,municipality,profile_image)
-                VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE 
+                ->execute([$firstName,$lastName,$email,$mobile,$user_id]);
+
+            $pdo->prepare("INSERT INTO officer_profiles (user_id,gov_id,department,position,office,assigned_region,province,municipality,profile_image)
+                VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
                 gov_id=VALUES(gov_id),department=VALUES(department),position=VALUES(position),
                 office=VALUES(office),assigned_region=VALUES(assigned_region),province=VALUES(province),
                 municipality=VALUES(municipality),profile_image=VALUES(profile_image)")
-                ->execute([$user_id, $_POST['gov_id']??'', $_POST['department']??'', $_POST['position']??'', 
-                          $_POST['office']??'', $_POST['assigned_region']??'', $_POST['province']??'', 
-                          $_POST['municipality']??'', $profileImage]);
-            
-            echo json_encode(['success'=>true,'message'=>'Profile updated!','profile_image'=>$profileImage]); 
-        } catch(Exception $e){ 
-            echo json_encode(['success'=>false,'message'=>$e->getMessage()]); 
+                ->execute([$user_id,$_POST['gov_id']??'',$_POST['department']??'',$_POST['position']??'',
+                           $_POST['office']??'',$_POST['assigned_region']??'',$_POST['province']??'',
+                           $_POST['municipality']??'',$profileImage]);
+
+            // Update session name
+            $_SESSION['firstName'] = $firstName;
+            $_SESSION['lastName']  = $lastName;
+
+            echo json_encode(['success'=>true,'message'=>'Profile updated successfully']);
+        } catch(Exception $e) {
+            echo json_encode(['success'=>false,'message'=>$e->getMessage()]);
         }
         exit;
     }
+
+    echo json_encode(['success'=>false,'message'=>'Unknown action']);
+    exit;
 }
 
-// ── FETCH DATA ────────────────────────────────────────────────────────────────
+// ── Fetch Dashboard Data ──────────────────────────────────────────────────────
 $stats = [
-    'approved_farms'  => $pdo->query("SELECT COUNT(*) FROM farms WHERE status='Approved'")->fetchColumn(),
-    'pending_farms'   => $pdo->query("SELECT COUNT(*) FROM farms WHERE status='Pending'")->fetchColumn(),
-    'active_incidents'=> $pdo->query("SELECT COUNT(*) FROM incidents WHERE status IN('Pending','In Progress')")->fetchColumn(),
-    'pending_reports' => $pdo->query("SELECT COUNT(*) FROM public_reports WHERE status='Pending'")->fetchColumn(),
-    'total_livestock' => $pdo->query("SELECT COALESCE(SUM(qty),0) FROM livestock")->fetchColumn(),
+    'approved_farms'   => (int)$pdo->query("SELECT COUNT(*) FROM farms WHERE status='Approved'")->fetchColumn(),
+    'pending_farms'    => (int)$pdo->query("SELECT COUNT(*) FROM farms WHERE status='Pending'")->fetchColumn(),
+    'active_incidents' => (int)$pdo->query("SELECT COUNT(*) FROM incidents WHERE status IN('Pending','In Progress')")->fetchColumn(),
+    'pending_reports'  => (int)$pdo->query("SELECT COUNT(*) FROM public_reports WHERE status='Pending'")->fetchColumn(),
+    'total_livestock'  => (int)$pdo->query("SELECT COALESCE(SUM(qty),0) FROM livestock")->fetchColumn()
 ];
 
-$s=$pdo->query("SELECT i.*,f.name as farm_name,u.firstName,u.lastName FROM incidents i LEFT JOIN farms f ON i.farmId=f.id LEFT JOIN users u ON i.reporterId=u.id ORDER BY i.createdAt DESC LIMIT 5");
-$recent_incidents=$s->fetchAll();
+$recent_incidents = $pdo->query("SELECT i.*,f.name as farm_name,u.firstName,u.lastName FROM incidents i LEFT JOIN farms f ON i.farmId=f.id LEFT JOIN users u ON i.reporterId=u.id ORDER BY i.createdAt DESC LIMIT 20")->fetchAll();
+$all_farms = $pdo->query("SELECT f.*,u.firstName,u.lastName,(SELECT COALESCE(SUM(qty),0) FROM livestock WHERE farmId=f.id) as total_livestock FROM farms f LEFT JOIN users u ON f.ownerId=u.id ORDER BY f.createdAt DESC")->fetchAll();
+$pub_reports = $pdo->query("SELECT * FROM public_reports ORDER BY createdAt DESC LIMIT 50")->fetchAll();
 
-$s=$pdo->query("SELECT f.*,u.firstName,u.lastName,(SELECT COALESCE(SUM(qty),0) FROM livestock WHERE farmId=f.id) as total_livestock FROM farms f LEFT JOIN users u ON f.ownerId=u.id ORDER BY f.createdAt DESC");
-$all_farms=$s->fetchAll();
+// Officer profile
+$stmt = $pdo->prepare("SELECT u.*,op.* FROM users u LEFT JOIN officer_profiles op ON u.id=op.user_id WHERE u.id=?");
+$stmt->execute([$user_id]);
+$profileData = $stmt->fetch() ?: [];
 
-$s=$pdo->query("SELECT i.*,f.name as farm_name FROM incidents i LEFT JOIN farms f ON i.farmId=f.id ORDER BY i.priority DESC,i.createdAt DESC");
-$all_incidents=$s->fetchAll();
-
-$s=$pdo->query("SELECT * FROM public_reports ORDER BY createdAt DESC LIMIT 20");
-$public_reports=$s->fetchAll();
-
-// FIXED USER PROFILE QUERY (SINGLE QUERY, NO DUPLICATES)
-$s = $pdo->prepare("SELECT u.*,p.gov_id,p.department,p.position,p.office,p.assigned_region,p.municipality,p.province,p.profile_image 
-                    FROM users u 
-                    LEFT JOIN officer_profiles p ON u.id=p.user_id 
-                    WHERE u.id=?");
-$s->execute([$user_id]); 
-$user_profile = $s->fetch();
-if(!$user_profile) $user_profile = [];
-$user_profile['mobile'] = $user_profile['mobile'] ?? '';
-$user_profile['profile_image'] = $user_profile['profile_image'] ?? '';
-
-$user_name  = trim(($user_profile['firstName']??'').' '.($user_profile['lastName']??''));
-$user_initial = strtoupper(substr($user_name,0,1));
-$user_role_label = $user_role;
-
-// Analytics
-$livestock_stats=$pdo->query("SELECT type,SUM(qty) as total_qty,AVG(weight) as avg_weight FROM livestock GROUP BY type")->fetchAll();
-$farm_by_status =$pdo->query("SELECT status,COUNT(*) as cnt FROM farms GROUP BY status")->fetchAll();
-$incident_by_priority=$pdo->query("SELECT priority,COUNT(*) as cnt FROM incidents GROUP BY priority")->fetchAll();
-$incident_by_status=$pdo->query("SELECT status,COUNT(*) as cnt FROM incidents GROUP BY status")->fetchAll();
-$monthly_farms=$pdo->query("SELECT DATE_FORMAT(createdAt,'%b') as month,COUNT(*) as cnt FROM farms WHERE createdAt>=DATE_SUB(NOW(),INTERVAL 6 MONTH) GROUP BY month ORDER BY createdAt")->fetchAll();
-$total_livestock=$stats['total_livestock'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
